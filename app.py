@@ -85,19 +85,25 @@ USERS = {
         "password": "sales123",
         "name": "Sales Manager",
         "company": "Sales Company",
-        "modules": ["sales", "inventory", "communication"],
+        "modules": [
+            "sales", "inventory", "communication"
+        ],
     },
     "warehouse": {
         "password": "warehouse123",
         "name": "Warehouse Manager",
         "company": "Operations Company",
-        "modules": ["inventory", "purchases", "operations"],
+        "modules": [
+            "inventory", "purchases", "operations"
+        ],
     },
     "finance": {
         "password": "finance123",
         "name": "Finance Manager",
         "company": "Finance Company",
-        "modules": ["finance", "executive"],
+        "modules": [
+            "finance", "executive"
+        ],
     },
 }
 
@@ -117,8 +123,12 @@ def login_page():
     st.markdown(
         f"""
         <div style="text-align:center; padding:40px 0 10px 0;">
-            <h1 style="font-size:28px; margin-bottom:4px;">🏢 {T['app_title']}</h1>
-            <p style="color:#666; font-size:14px;">{T['login_title']}</p>
+            <h1 style="font-size:28px; margin-bottom:4px;">
+                🏢 {T['app_title']}
+            </h1>
+            <p style="color:#666; font-size:14px;">
+                {T['login_title']}
+            </p>
         </div>
         """,
         unsafe_allow_html=True,
@@ -127,29 +137,41 @@ def login_page():
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        username = st.text_input(T["username"], key="login_username")
+        username = st.text_input(
+            T["username"],
+            key="login_username"
+        )
+
         password = st.text_input(
             T["password"],
             type="password",
-            key="login_password",
+            key="login_password"
         )
 
         lang_choice = st.selectbox(
             T["language"],
             options=["العربية", "English"],
-            index=0,
+            index=0
         )
 
-        if st.button(T["login"], use_container_width=True, type="primary"):
+        if st.button(
+            T["login"],
+            use_container_width=True,
+            type="primary"
+        ):
             user = USERS.get(username)
 
             if user and user["password"] == password:
                 st.session_state.authenticated = True
                 st.session_state.username = username
-                st.session_state.lang = "ar" if lang_choice == "العربية" else "en"
+                st.session_state.lang = (
+                    "ar" if lang_choice == "العربية" else "en"
+                )
                 st.rerun()
             else:
-                st.error("بيانات الدخول غير صحيحة / Invalid credentials")
+                st.error(
+                    "بيانات الدخول غير صحيحة / Invalid credentials"
+                )
 
 
 def top_bar():
@@ -158,7 +180,7 @@ def top_bar():
 
     c1, c2, c3, c4, c5, c6 = st.columns(
         [0.7, 1.4, 1.6, 1.2, 1.4, 0.8],
-        vertical_alignment="center",
+        vertical_alignment="center"
     )
 
     with c1:
@@ -167,7 +189,8 @@ def top_bar():
             <div style="display:flex; align-items:center; gap:8px;">
                 <div style="width:34px;height:34px;border-radius:50%;
                             background:#2563eb;color:white;display:flex;
-                            align-items:center;justify-content:center;font-weight:bold;">
+                            align-items:center;justify-content:center;
+                            font-weight:bold;">
                     {user['name'][0]}
                 </div>
                 <div style="font-size:13px;font-weight:600;">
@@ -175,7 +198,7 @@ def top_bar():
                 </div>
             </div>
             """,
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
 
     with c2:
@@ -185,7 +208,7 @@ def top_bar():
                 <b>{T['company']}:</b> {user['company']}
             </div>
             """,
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
 
     with c3:
@@ -195,7 +218,7 @@ def top_bar():
                 🏢 Enterprise Platform
             </div>
             """,
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
 
     with c4:
@@ -206,7 +229,7 @@ def top_bar():
                 🕒 {now.strftime('%H:%M')}
             </div>
             """,
-            unsafe_allow_html=True,
+            unsafe_allow_html=True
         )
 
     with c5:
@@ -215,7 +238,7 @@ def top_bar():
             options=["العربية", "English"],
             index=0 if st.session_state.lang == "ar" else 1,
             key="top_language",
-            label_visibility="collapsed",
+            label_visibility="collapsed"
         )
 
         new_lang = "ar" if lang == "العربية" else "en"
@@ -225,7 +248,10 @@ def top_bar():
             st.rerun()
 
     with c6:
-        if st.button("🚪 " + T["logout"], use_container_width=True):
+        if st.button(
+            "🚪 " + T["logout"],
+            use_container_width=True
+        ):
             st.session_state.authenticated = False
             st.session_state.username = None
             st.rerun()
@@ -247,7 +273,7 @@ def welcome_page():
             </p>
         </div>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
     allowed = user["modules"]
@@ -256,10 +282,13 @@ def welcome_page():
     for i, module_key in enumerate(allowed):
         with cols[i % 3]:
             st.page_link(
-                f"?module={module_key}",
+                None,
                 label=T["modules"][module_key],
                 icon="📁",
                 use_container_width=True,
+                on_click=lambda m=module_key: st.query_params.update(
+                    {"module": m}
+                )
             )
 
 
@@ -286,7 +315,7 @@ def module_dashboard(module_key):
         "إضافة / Add",
         "قائمة / List",
         "تقرير / Report",
-        "إعدادات / Settings",
+        "إعدادات / Settings"
     ])
 
     with tabs[0]:
@@ -311,14 +340,18 @@ def sidebar_menu():
 
         for module_key in allowed:
             st.page_link(
-                f"?module={module_key}",
+                None,
                 label=T["modules"][module_key],
                 icon="📁",
+                on_click=lambda m=module_key: st.query_params.update(
+                    {"module": m}
+                )
             )
 
 
 if not st.session_state.authenticated:
     login_page()
+
 else:
     top_bar()
     sidebar_menu()
@@ -333,5 +366,6 @@ else:
             module_dashboard(module)
         else:
             st.warning(T["no_access"])
+
     else:
         welcome_page()
