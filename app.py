@@ -132,6 +132,14 @@ USERS = {
             "finance", "executive"
         ],
     },
+    "hr": {
+        "password": "hr123",
+        "name": "HR Manager",
+        "company": "Enterprise Group",
+        "modules": [
+            "hr", "communication"
+        ],
+    },
 }
 
 if "authenticated" not in st.session_state:
@@ -142,6 +150,15 @@ if "username" not in st.session_state:
 
 if "lang" not in st.session_state:
     st.session_state.lang = "ar"
+
+if "employees" not in st.session_state:
+    st.session_state.employees = []
+
+if "attendance" not in st.session_state:
+    st.session_state.attendance = []
+
+if "leaves" not in st.session_state:
+    st.session_state.leaves = []
 
 T = LANGS[st.session_state.lang]
 
@@ -322,6 +339,206 @@ def welcome_page():
             )
 
 
+def hr_dashboard():
+    st.subheader("الموارد البشرية")
+
+    kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+
+    with kpi1:
+        st.metric("عدد الموظفين", len(st.session_state.employees))
+
+    with kpi2:
+        st.metric("سجلات الحضور", len(st.session_state.attendance))
+
+    with kpi3:
+        st.metric("طلبات الإجازات", len(st.session_state.leaves))
+
+    with kpi4:
+        st.metric("نسبة الحضور", "96%")
+
+    st.divider()
+
+    tabs = st.tabs([
+        "إضافة موظف",
+        "قائمة الموظفين",
+        "الحضور",
+        "الإجازات",
+        "الرواتب",
+        "التقييمات",
+        "التدريب",
+        "نهاية الخدمة",
+    ])
+
+    with tabs[0]:
+        add_employee()
+
+    with tabs[1]:
+        employees_list()
+
+    with tabs[2]:
+        attendance_page()
+
+    with tabs[3]:
+        leaves_page()
+
+    with tabs[4]:
+        payroll_page()
+
+    with tabs[5]:
+        evaluations_page()
+
+    with tabs[6]:
+        training_page()
+
+    with tabs[7]:
+        exit_page()
+
+
+def add_employee():
+    st.markdown("### إضافة موظف جديد")
+
+    with st.form("add_employee_form"):
+        col1, col2 = st.columns(2)
+
+        with col1:
+            name = st.text_input("الاسم الكامل")
+            job_title = st.text_input("المسمى الوظيفي")
+            department = st.selectbox(
+                "القسم",
+                ["المبيعات", "المالية", "المخازن", "الإنتاج", "الجودة", "HR"]
+            )
+            branch = st.selectbox(
+                "الفرع",
+                ["القاهرة", "الإسكندرية", "المصنع"]
+            )
+
+        with col2:
+            phone = st.text_input("رقم الهاتف")
+            email = st.text_input("البريد الإلكتروني")
+            hire_date = st.date_input("تاريخ التعيين")
+            salary = st.number_input("الراتب الأساسي", min_value=0.0)
+
+        submitted = st.form_submit_button(
+            "حفظ الموظف",
+            use_container_width=True,
+            type="primary"
+        )
+
+        if submitted:
+            if name and job_title:
+                st.session_state.employees.append({
+                    "name": name,
+                    "job_title": job_title,
+                    "department": department,
+                    "branch": branch,
+                    "phone": phone,
+                    "email": email,
+                    "hire_date": str(hire_date),
+                    "salary": salary,
+                })
+                st.success("تم إضافة الموظف بنجاح")
+            else:
+                st.error("الاسم والمسمى الوظيفي مطلوبان")
+
+
+def employees_list():
+    st.markdown("### قائمة الموظفين")
+
+    if not st.session_state.employees:
+        st.info("لا يوجد موظفون بعد")
+    else:
+        for emp in st.session_state.employees:
+            with st.expander(emp["name"]):
+                st.write(f"المسمى الوظيفي: {emp['job_title']}")
+                st.write(f"القسم: {emp['department']}")
+                st.write(f"الفرع: {emp['branch']}")
+                st.write(f"الهاتف: {emp['phone']}")
+                st.write(f"البريد: {emp['email']}")
+                st.write(f"تاريخ التعيين: {emp['hire_date']}")
+                st.write(f"الراتب: {emp['salary']}")
+
+
+def attendance_page():
+    st.markdown("### تسجيل الحضور")
+
+    with st.form("attendance_form"):
+        employee_name = st.text_input("اسم الموظف")
+        date = st.date_input("التاريخ")
+        check_in = st.time_input("وقت الحضور")
+        check_out = st.time_input("وقت الانصراف")
+
+        submitted = st.form_submit_button(
+            "حفظ الحضور",
+            use_container_width=True
+        )
+
+        if submitted:
+            st.session_state.attendance.append({
+                "employee": employee_name,
+                "date": str(date),
+                "check_in": str(check_in),
+                "check_out": str(check_out),
+            })
+            st.success("تم تسجيل الحضور")
+
+
+def leaves_page():
+    st.markdown("### طلب إجازة")
+
+    with st.form("leave_form"):
+        employee_name = st.text_input("اسم الموظف")
+        leave_type = st.selectbox(
+            "نوع الإجازة",
+            ["سنوية", "مرضية", "بدون راتب", "طارئة"]
+        )
+        from_date = st.date_input("من تاريخ")
+        to_date = st.date_input("إلى تاريخ")
+        reason = st.text_area("السبب")
+
+        submitted = st.form_submit_button(
+            "إرسال الطلب",
+            use_container_width=True
+        )
+
+        if submitted:
+            st.session_state.leaves.append({
+                "employee": employee_name,
+                "type": leave_type,
+                "from": str(from_date),
+                "to": str(to_date),
+                "reason": reason,
+            })
+            st.success("تم إرسال طلب الإجازة")
+
+
+def payroll_page():
+    st.markdown("### الرواتب")
+
+    if not st.session_state.employees:
+        st.info("لا يوجد موظفون بعد")
+    else:
+        for emp in st.session_state.employees:
+            st.write(f"{emp['name']} - {emp['salary']}")
+
+
+def evaluations_page():
+    st.markdown("### التقييمات")
+
+    st.info("صفحة التقييمات قيد التطوير")
+
+
+def training_page():
+    st.markdown("### التدريب")
+
+    st.info("صفحة التدريب قيد التطوير")
+
+
+def exit_page():
+    st.markdown("### نهاية الخدمة")
+
+    st.info("صفحة نهاية الخدمة قيد التطوير")
+
+
 def module_dashboard(module_key):
     st.subheader(T["modules"][module_key])
 
@@ -435,7 +652,10 @@ else:
     query_params = st.query_params
     module = query_params.get("module", None)
 
-    if module:
+    if module == "hr":
+        hr_dashboard()
+
+    elif module:
         user = USERS[st.session_state.username]
 
         if module in user["modules"]:
