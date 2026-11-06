@@ -131,47 +131,50 @@ def login_page():
             </p>
         </div>
         """,
-        unsafe_allow_html=True,
+        unsafe_allow_html=True
     )
 
     col1, col2, col3 = st.columns([1, 2, 1])
 
     with col2:
-        username = st.text_input(
-            T["username"],
-            key="login_username"
-        )
+        with st.form("login_form"):
+            username = st.text_input(
+                T["username"],
+                key="login_username"
+            )
 
-        password = st.text_input(
-            T["password"],
-            type="password",
-            key="login_password"
-        )
+            password = st.text_input(
+                T["password"],
+                type="password",
+                key="login_password"
+            )
 
-        lang_choice = st.selectbox(
-            T["language"],
-            options=["العربية", "English"],
-            index=0
-        )
+            lang_choice = st.selectbox(
+                T["language"],
+                options=["العربية", "English"],
+                index=0
+            )
 
-        if st.button(
-            T["login"],
-            use_container_width=True,
-            type="primary"
-        ):
-            user = USERS.get(username)
+            submitted = st.form_submit_button(
+                T["login"],
+                use_container_width=True,
+                type="primary"
+            )
 
-            if user and user["password"] == password:
-                st.session_state.authenticated = True
-                st.session_state.username = username
-                st.session_state.lang = (
-                    "ar" if lang_choice == "العربية" else "en"
-                )
-                st.rerun()
-            else:
-                st.error(
-                    "بيانات الدخول غير صحيحة / Invalid credentials"
-                )
+            if submitted:
+                user = USERS.get(username)
+
+                if user and user["password"] == password:
+                    st.session_state.authenticated = True
+                    st.session_state.username = username
+                    st.session_state.lang = (
+                        "ar" if lang_choice == "العربية" else "en"
+                    )
+                    st.rerun()
+                else:
+                    st.error(
+                        "بيانات الدخول غير صحيحة / Invalid credentials"
+                    )
 
 
 def top_bar():
