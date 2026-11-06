@@ -947,6 +947,8 @@ def hr_placeholder(page_key):
 
 
 def render_hr():
+    from hr_extended import render_extended_hr
+
     page = st.session_state.hr_page
 
     handlers = {
@@ -959,8 +961,13 @@ def render_hr():
     if page in handlers:
         handlers[page]()
     else:
-        hr_placeholder(page)
+        user = current_user()
 
+        render_extended_hr(
+            page=page,
+            company=user["company"][1],
+            employees=company_employees(),
+        )
 
 def module_placeholder(module_key):
     st.subheader(translated(MODULES[module_key]))
