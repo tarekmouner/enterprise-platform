@@ -212,11 +212,8 @@ def open_module(module_key):
 
 
 def logout():
-    # مسح الجلسة يمنع انتقال بيانات HR المؤقتة
-    # إلى مستخدم آخر عند الدخول من نفس الجلسة
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-
 
 def change_language():
     st.session_state.lang = st.session_state.header_language
