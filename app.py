@@ -8,6 +8,33 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
+# تصغير القائمة الجانبية
+st.markdown(
+    """
+    <style>
+        [data-testid="stSidebar"] {
+            width: 200px !important;
+            min-width: 200px !important;
+        }
+        [data-testid="stSidebar"] * {
+            font-size: 12px !important;
+        }
+        [data-testid="stSidebar"] .stMarkdown {
+            font-size: 12px !important;
+        }
+        [data-testid="stSidebar"] button {
+            font-size: 12px !important;
+            padding: 4px 6px !important;
+        }
+        [data-testid="stSidebar"] h3 {
+            font-size: 13px !important;
+            margin-bottom: 6px !important;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True
+)
+
 LANGS = {
     "ar": {
         "app_title": "منصة المؤسسة الذكية",
@@ -350,6 +377,52 @@ def sidebar_menu():
                     {"module": m}
                 )
             )
+
+        st.divider()
+
+        st.markdown("### 📄 الصفحات")
+
+        st.page_link(
+            None,
+            label="الرئيسية",
+            icon="🏠",
+            on_click=lambda: st.query_params.update({})
+        )
+
+        st.page_link(
+            None,
+            label="الإعدادات",
+            icon="⚙️",
+            on_click=lambda: st.query_params.update({"module": "settings"})
+        )
+
+        st.page_link(
+            None,
+            label="المستخدمون",
+            icon="👥",
+            on_click=lambda: st.query_params.update({"module": "users"})
+        )
+
+        st.page_link(
+            None,
+            label="الشركات",
+            icon="🏢",
+            on_click=lambda: st.query_params.update({"module": "companies"})
+        )
+
+        st.page_link(
+            None,
+            label="الفروع",
+            icon="🏬",
+            on_click=lambda: st.query_params.update({"module": "branches"})
+        )
+
+        st.page_link(
+            None,
+            label="المخازن",
+            icon="📦",
+            on_click=lambda: st.query_params.update({"module": "warehouses"})
+        )
 
 
 if not st.session_state.authenticated:
