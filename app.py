@@ -66,7 +66,70 @@ def attempt(function, *args):
         ))
 
     except ValueError as error:
-        st.error(tr(
+        messages = {
+            "Company name is required": (
+                "اسم الشركة مطلوب.",
+                "Company name is required.",
+            ),
+            "Department name is required": (
+                "اسم الإدارة مطلوب.",
+                "Department name is required.",
+            ),
+            "Missing employee fields": (
+                "أكمل بيانات الموظف المطلوبة.",
+                "Complete required employee fields.",
+            ),
+            "Contract number required": (
+                "رقم العقد مطلوب.",
+                "Contract number is required.",
+            ),
+            "Invalid contract dates": (
+                "تواريخ العقد غير صحيحة.",
+                "Invalid contract dates.",
+            ),
+            "Employee is inactive": (
+                "الموظف غير نشط.",
+                "Employee is inactive.",
+            ),
+            "Contract starts before hire date": (
+                "بداية العقد تسبق تاريخ التعيين.",
+                "Contract starts before hire date.",
+            ),
+            "Invalid attendance times": (
+                "وقت الانصراف يجب أن يكون بعد الحضور.",
+                "Check-out must follow check-in.",
+            ),
+            "Attendance precedes hire date": (
+                "الحضور يسبق تاريخ تعيين الموظف.",
+                "Attendance precedes hire date.",
+            ),
+            "Invalid leave request": (
+                "راجع تواريخ الإجازة والسبب.",
+                "Check leave dates and reason.",
+            ),
+            "Leave precedes hire date": (
+                "الإجازة تسبق تاريخ التعيين.",
+                "Leave precedes hire date.",
+            ),
+            "Overlapping leave request": (
+                "يوجد طلب إجازة متداخل لهذا الموظف.",
+                "An overlapping leave request exists.",
+            ),
+            "Review note required": (
+                "تعليق المراجعة مطلوب.",
+                "Review note is required.",
+            ),
+        }
+
+        pair = messages.get(
+            str(error),
+            (
+                "راجع البيانات وحالة الموظف أو الطلب.",
+                "Check the data and employee/request status.",
+            ),
+        )
+
+        st.error(tr(pair[0], pair[1]))        st.error(tr(
             "راجع الحقول والتواريخ وحالة الموظف والعقد.",
             "Check fields, dates and employee/contract status.",
         ))
@@ -852,7 +915,23 @@ elif module == "hr":
 
             with contracts_tab:
                 contract_panel(employee)
+    elif page == "Attendance":
+        hr_operations.attendance_page(
+            company_id,
+            actor,
+            employees,
+            load,
+            attempt,
+        )
 
+    elif page == "Leaves":
+        hr_operations.leaves_page(
+            company_id,
+            actor,
+            employees,
+            load,
+            attempt,
+        )
 
 elif module == "audit":
     st.subheader(tr("سجل العمليات", "Activity Log"))
