@@ -1,756 +1,473 @@
-import streamlit as st
+from datetime import date, time
+
 import pandas as pd
+import streamlit as st
 
-from datetime import date
-from uuid import uuid4
+import database as db
 
-
-# =========================================================
-# اللغة والبيانات المؤقتة
-# =========================================================
 
 def tr(arabic, english):
-    return arabic if st.session_state.get("lang", "ar") == "ar" else english
+    return (
+        arabic
+        if st.session_state.get("lang", "ar") == "ar"
+        else english
+    )
 
 
-def initialize():
-    for key in [
-        "hr_contracts",
-        "hr_payroll_drafts",
-        "hr_evaluations",
-        "hr_training",
-        "hr_exits",
-    ]:
-        if key not in st.session_state:
-            st.session_state[key] = []
-
-
-def records(key, company):
-    return [
-        row
-        for row in st.session_state[key]
-        if row["company"] == company
+def employee_selector(employees, key):
+    active = [
+        employee
+        for employee in employees
+        if employee["status"] == "active"
     ]
 
+    if not active:
+        return None
 
-def employee_picker(employees, key):
-    mapping = {
-        employee["id"]: (
-            f"{employee['code']} — {employee['name']}"
-        )
-        for employee in employees
+    employee_map = {
+        employee["id"]: employee
+        for employee in active
     }
 
     return st.selectbox(
         tr("الموظف", "Employee"),
-        options=list(mapping.keys()),
-        format_func=lambda employee_id: mapping[employee_id],
+        options=list(employee_map),
+        format_func=lambda employee_id: (
+            f"{employee_map[employee_id]['code']} — "
+            f"{employee_map[employee_id]['full_name']}"
+        ),
         key=key,
     )
 
 
-def employee_name(employees, employee_id):
-    for employee in employees:
-        if employee["id"] == employee_id:
-            return employee["name"]
-
-    return employee_id
-
-
-def show_records(key, company, employees, columns):
-    rows = []
-
-    for record in records(key, company):
-        display = {
-            tr("الموظف", "Employee"): employee_name(
-                employees,
-                record["employee_id"],
-            )
-        }
-
-        for field, arabic, english in columns:
-            display[tr(arabic, english)] = record.get(field, "")
-
-        rows.append(display)
-
-    if rows:
-        st.dataframe(
-            pd.DataFrame(rows),
-            hide_index=True,
-            use_container_width=True,
-        )
-    else:
-        st.info(tr("لا توجد سجلات بعد.", "No records yet."))
-
-
-def save_record(key, company, values):
-    st.session_state[key].append({
-        "id": uuid4().hex,
-        "company": company,
-        **values,
-    })
-
-    st.rerun()
-
-
-# =========================================================
-# العقود
-# =========================================================
-
-def contracts_page(company, employees):
-    st.subheader(tr("عقود الموظفين", "Employee Contracts"))
-
-    add_tab, list_tab = st.tabs([
-        tr("إضافة عقد", "Add contract"),
-        tr("قائمة العقود", "Contract list"),
-    ])
-
-    with add_tab:
-        st.caption(
-            tr(
-                "تسجيل بيانات العقد فقط، وليس إنشاء عقد قانوني معتمد.",
-                "Contract record only, not a legally approved contract.",
-            )
-        )
-
-        with st.form("extended_contract_form"):
-            employee_id = employee_picker(
-                employees,
-                "contract_employee",
-            )
-
-            number = st.text_input(
-                tr("رقم العقد", "Contract number")
-            )
-
-            contract_type = st.selectbox(
-                tr("نوع العقد", "Contract type"),
-                ["fixed", "indefinite", "other"],
-                format_func=lambda value: {
-                    "fixed": tr("محدد المدة", "Fixed-term"),
-                    "indefinite": tr("غير محدد المدة", "Indefinite"),
-                    "other": tr("آخر", "Other"),
-                }[value],
-            )
-
-            c1, c2 = st.columns(2)
-
-            with c1:
-                start = st.date_input(
-                    tr("تاريخ البداية", "Start date")
-                )
-
-            with c2:
-                end = st.date_input(
-                    tr(
-                        "تاريخ النهاية إن كان محدد المدة",
-                        "End date for fixed-term contracts",
-                    )
-                )
-
-            basic_salary = st.number_input(
-                tr("الراتب الأساسي", "Basic salary"),
-                min_value=0.0,
-                step=100.0,
-            )
-
-            currency = st.text_input(
-                tr("رمز العملة", "Currency code"),
-                value="EGP",
-            )
-
-            notes = st.text_area(tr("ملاحظات", "Notes"))
-
-            submitted = st.form_submit_button(
-                tr("حفظ العقد", "Save contract"),
-                type="primary",
-                use_container_width=True,
-            )
-
-        if submitted:
-            number = number.strip()
-            currency = currency.strip().upper()
-
-            duplicate = any(
-                row["number"].casefold() == number.casefold()
-                for row in records("hr_contracts", company)
-            )
-
-            if not number or not currency:
-                st.error(
-                    tr(
-                        "رقم العقد والعملة مطلوبان.",
-                        "Contract number and currency are required.",
-                    )
-                )
-
-            elif duplicate:
-                st.error(
-                    tr(
-                        "رقم العقد مستخدم بالفعل.",
-                        "Contract number already exists.",
-                    )
-                )
-
-            elif contract_type == "fixed" and end < start:
-                st.error(
-                    tr(
-                        "تاريخ النهاية يجب ألا يسبق البداية.",
-                        "End date cannot precede start date.",
-                    )
-                )
-
-            else:
-                save_record(
-                    "hr_contracts",
-                    company,
-                    {
-                        "employee_id": employee_id,
-                        "number": number,
-                        "type": contract_type,
-                        "start": start.isoformat(),
-                        "end": (
-                            end.isoformat()
-                            if contract_type == "fixed"
-                            else ""
-                        ),
-                        "basic_salary": basic_salary,
-                        "currency": currency,
-                        "notes": notes.strip(),
-                    },
-                )
-
-    with list_tab:
-        show_records(
-            "hr_contracts",
-            company,
-            employees,
-            [
-                ("number", "رقم العقد", "Contract number"),
-                ("type", "نوع العقد", "Contract type"),
-                ("start", "البداية", "Start"),
-                ("end", "النهاية", "End"),
-                ("basic_salary", "الأساسي", "Basic salary"),
-                ("currency", "العملة", "Currency"),
-                ("notes", "الملاحظات", "Notes"),
-            ],
-        )
-
-
-# =========================================================
-# مسودات الرواتب
-# =========================================================
-
-def payroll_page(company, employees):
-    st.subheader(tr("مسودات الرواتب", "Payroll Drafts"))
-
-    st.warning(
-        tr(
-            "حساب تجريبي يدوي فقط. لا يحسب الضرائب أو التأمينات "
-            "أو رصيد الإجازات أو الاستقطاعات القانونية، "
-            "ولا ينشئ قيدًا محاسبيًا أو تحويلًا بنكيًا.",
-            "Manual demo calculation only. It does not calculate taxes, "
-            "insurance, leave balances or statutory deductions, "
-            "and does not create accounting entries or bank transfers.",
-        )
-    )
-
-    add_tab, list_tab = st.tabs([
-        tr("إضافة مسودة", "Add draft"),
-        tr("قائمة المسودات", "Draft list"),
-    ])
-
-    with add_tab:
-        with st.form("extended_payroll_form"):
-            employee_id = employee_picker(
-                employees,
-                "payroll_employee",
-            )
-
-            c1, c2 = st.columns(2)
-
-            with c1:
-                year = st.number_input(
-                    tr("السنة", "Year"),
-                    min_value=2000,
-                    max_value=2100,
-                    value=date.today().year,
-                    step=1,
-                )
-
-            with c2:
-                month = st.selectbox(
-                    tr("الشهر", "Month"),
-                    list(range(1, 13)),
-                    index=date.today().month - 1,
-                )
-
-            currency = st.text_input(
-                tr("رمز العملة", "Currency code"),
-                value="EGP",
-            )
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                basic = st.number_input(
-                    tr("الأساسي", "Basic salary"),
-                    min_value=0.0,
-                    step=100.0,
-                )
-
-            with c2:
-                additions = st.number_input(
-                    tr("إضافات يدوية", "Manual additions"),
-                    min_value=0.0,
-                    step=100.0,
-                )
-
-            with c3:
-                deductions = st.number_input(
-                    tr("خصومات يدوية", "Manual deductions"),
-                    min_value=0.0,
-                    step=100.0,
-                )
-
-            notes = st.text_area(tr("ملاحظات", "Notes"))
-
-            submitted = st.form_submit_button(
-                tr("حفظ المسودة", "Save draft"),
-                type="primary",
-                use_container_width=True,
-            )
-
-        if submitted:
-            period = f"{int(year):04d}-{month:02d}"
-            net = round(basic + additions - deductions, 2)
-
-            duplicate = any(
-                row["employee_id"] == employee_id
-                and row["period"] == period
-                for row in records("hr_payroll_drafts", company)
-            )
-
-            if not currency.strip():
-                st.error(
-                    tr("العملة مطلوبة.", "Currency is required.")
-                )
-
-            elif duplicate:
-                st.error(
-                    tr(
-                        "توجد مسودة لهذا الموظف في الشهر نفسه.",
-                        "A draft already exists for this employee and month.",
-                    )
-                )
-
-            elif net < 0:
-                st.error(
-                    tr(
-                        "الخصومات تتجاوز الأساسي والإضافات.",
-                        "Deductions exceed salary and additions.",
-                    )
-                )
-
-            else:
-                save_record(
-                    "hr_payroll_drafts",
-                    company,
-                    {
-                        "employee_id": employee_id,
-                        "period": period,
-                        "basic": basic,
-                        "additions": additions,
-                        "deductions": deductions,
-                        "net": net,
-                        "currency": currency.strip().upper(),
-                        "notes": notes.strip(),
-                    },
-                )
-
-    with list_tab:
-        show_records(
-            "hr_payroll_drafts",
-            company,
-            employees,
-            [
-                ("period", "الفترة", "Period"),
-                ("basic", "الأساسي", "Basic"),
-                ("additions", "الإضافات", "Additions"),
-                ("deductions", "الخصومات", "Deductions"),
-                ("net", "الصافي التجريبي", "Demo net"),
-                ("currency", "العملة", "Currency"),
-                ("notes", "الملاحظات", "Notes"),
-            ],
-        )
-
-
-# =========================================================
-# التقييمات
-# =========================================================
-
-def evaluations_page(company, employees):
-    st.subheader(tr("تقييمات الموظفين", "Employee Evaluations"))
-
-    add_tab, list_tab = st.tabs([
-        tr("إضافة تقييم", "Add evaluation"),
-        tr("قائمة التقييمات", "Evaluation list"),
-    ])
-
-    with add_tab:
-        with st.form("extended_evaluation_form"):
-            employee_id = employee_picker(
-                employees,
-                "evaluation_employee",
-            )
-
-            evaluation_date = st.date_input(
-                tr("تاريخ التقييم", "Evaluation date")
-            )
-
-            evaluator = st.text_input(
-                tr("اسم المقيّم", "Evaluator name")
-            )
-
-            c1, c2, c3 = st.columns(3)
-
-            with c1:
-                performance = st.slider(
-                    tr("الأداء", "Performance"),
-                    1,
-                    5,
-                    3,
-                )
-
-            with c2:
-                discipline = st.slider(
-                    tr("الالتزام", "Discipline"),
-                    1,
-                    5,
-                    3,
-                )
-
-            with c3:
-                teamwork = st.slider(
-                    tr("التعاون", "Teamwork"),
-                    1,
-                    5,
-                    3,
-                )
-
-            notes = st.text_area(
-                tr("ملاحظات وخطة تحسين", "Notes and improvement plan")
-            )
-
-            submitted = st.form_submit_button(
-                tr("حفظ التقييم", "Save evaluation"),
-                type="primary",
-                use_container_width=True,
-            )
-
-        if submitted:
-            if not evaluator.strip():
-                st.error(
-                    tr(
-                        "اسم المقيّم مطلوب.",
-                        "Evaluator name is required.",
-                    )
-                )
-            else:
-                save_record(
-                    "hr_evaluations",
-                    company,
-                    {
-                        "employee_id": employee_id,
-                        "date": evaluation_date.isoformat(),
-                        "evaluator": evaluator.strip(),
-                        "performance": performance,
-                        "discipline": discipline,
-                        "teamwork": teamwork,
-                        "average": round(
-                            (performance + discipline + teamwork) / 3,
-                            2,
-                        ),
-                        "notes": notes.strip(),
-                    },
-                )
-
-    with list_tab:
-        show_records(
-            "hr_evaluations",
-            company,
-            employees,
-            [
-                ("date", "التاريخ", "Date"),
-                ("evaluator", "المقيّم", "Evaluator"),
-                ("performance", "الأداء", "Performance"),
-                ("discipline", "الالتزام", "Discipline"),
-                ("teamwork", "التعاون", "Teamwork"),
-                ("average", "المتوسط من 5", "Average out of 5"),
-                ("notes", "الملاحظات", "Notes"),
-            ],
-        )
-
-
-# =========================================================
-# التدريب
-# =========================================================
-
-def training_page(company, employees):
-    st.subheader(tr("تدريب الموظفين", "Employee Training"))
-
-    add_tab, list_tab = st.tabs([
-        tr("إضافة تدريب", "Add training"),
-        tr("قائمة التدريب", "Training list"),
-    ])
-
-    with add_tab:
-        with st.form("extended_training_form"):
-            employee_id = employee_picker(
-                employees,
-                "training_employee",
-            )
-
-            title = st.text_input(
-                tr("اسم البرنامج", "Program name")
-            )
-
-            provider = st.text_input(
-                tr("الجهة المقدمة", "Provider")
-            )
-
-            c1, c2 = st.columns(2)
-
-            with c1:
-                start = st.date_input(
-                    tr("بداية التدريب", "Start date")
-                )
-
-            with c2:
-                end = st.date_input(
-                    tr("نهاية التدريب", "End date")
-                )
-
-            hours = st.number_input(
-                tr("عدد الساعات", "Training hours"),
-                min_value=0.0,
-                step=1.0,
-            )
-
-            status = st.selectbox(
-                tr("الحالة", "Status"),
-                ["planned", "in_progress", "completed"],
-                format_func=lambda value: {
-                    "planned": tr("مخطط", "Planned"),
-                    "in_progress": tr("جارٍ", "In progress"),
-                    "completed": tr("مكتمل", "Completed"),
-                }[value],
-            )
-
-            submitted = st.form_submit_button(
-                tr("حفظ التدريب", "Save training"),
-                type="primary",
-                use_container_width=True,
-            )
-
-        if submitted:
-            if not title.strip():
-                st.error(
-                    tr(
-                        "اسم البرنامج مطلوب.",
-                        "Program name is required.",
-                    )
-                )
-
-            elif end < start:
-                st.error(
-                    tr(
-                        "تاريخ النهاية يجب ألا يسبق البداية.",
-                        "End date cannot precede start date.",
-                    )
-                )
-
-            else:
-                save_record(
-                    "hr_training",
-                    company,
-                    {
-                        "employee_id": employee_id,
-                        "title": title.strip(),
-                        "provider": provider.strip(),
-                        "start": start.isoformat(),
-                        "end": end.isoformat(),
-                        "hours": hours,
-                        "status": status,
-                    },
-                )
-
-    with list_tab:
-        show_records(
-            "hr_training",
-            company,
-            employees,
-            [
-                ("title", "البرنامج", "Program"),
-                ("provider", "الجهة", "Provider"),
-                ("start", "البداية", "Start"),
-                ("end", "النهاية", "End"),
-                ("hours", "الساعات", "Hours"),
-                ("status", "الحالة", "Status"),
-            ],
-        )
-
-
-# =========================================================
-# نهاية الخدمة
-# =========================================================
-
-def exit_page(company, employees):
+def attendance_page(company_id, actor, employees, load, attempt):
     st.subheader(
-        tr("تسجيل نهاية الخدمة", "End of Employment Record")
+        tr("الحضور والانصراف", "Attendance")
     )
 
-    st.warning(
+    st.caption(
         tr(
-            "هذه الصفحة تسجل الواقعة فقط. لا تحسب المستحقات القانونية، "
-            "ولا توقف حساب المستخدم، ولا تغيّر حالة الموظف تلقائيًا.",
-            "This page records the event only. It does not calculate "
-            "legal entitlements, disable accounts or automatically "
-            "change employee status.",
+            "تسجيل يدوي لوردية داخل اليوم نفسه. "
+            "مدة التواجد ليست ساعات أجر معتمدة؛ "
+            "لا يتم خصم الاستراحات أو حساب التأخير.",
+            "Manual same-day shift entry. Presence duration "
+            "is not approved paid time; breaks and lateness "
+            "are not calculated.",
         )
     )
 
     add_tab, list_tab = st.tabs([
-        tr("إضافة سجل", "Add record"),
-        tr("السجلات", "Records"),
+        tr("تسجيل حضور", "Add attendance"),
+        tr("سجل الحضور", "Attendance register"),
     ])
 
     with add_tab:
-        with st.form("extended_exit_form"):
-            employee_id = employee_picker(
-                employees,
-                "exit_employee",
-            )
+        active = [
+            employee
+            for employee in employees
+            if employee["status"] == "active"
+        ]
 
-            last_day = st.date_input(
-                tr("آخر يوم عمل", "Last working day")
-            )
-
-            reason = st.text_area(
-                tr("السبب والملاحظات", "Reason and notes")
-            )
-
-            acknowledged = st.checkbox(
+        if not active:
+            st.info(
                 tr(
-                    "أفهم أن هذا سجل تجريبي وليس تسوية نهائية.",
-                    "I understand this is a demo record, "
-                    "not a final settlement.",
+                    "أضف موظفًا نشطًا أولًا.",
+                    "Add an active employee first.",
                 )
             )
 
-            submitted = st.form_submit_button(
-                tr("حفظ السجل", "Save record"),
-                type="primary",
-                use_container_width=True,
-            )
+        else:
+            with st.form(f"attendance_form_{company_id}"):
+                employee_id = employee_selector(
+                    employees,
+                    f"attendance_employee_{company_id}",
+                )
 
-        if submitted:
-            employee = next(
-                item
-                for item in employees
-                if item["id"] == employee_id
-            )
+                work_date = st.date_input(
+                    tr("يوم العمل", "Work date"),
+                    value=date.today(),
+                )
 
-            duplicate = any(
-                row["employee_id"] == employee_id
-                for row in records("hr_exits", company)
-            )
+                c1, c2 = st.columns(2)
 
-            if not acknowledged:
-                st.error(
-                    tr(
-                        "فعّل مربع الإقرار أولًا.",
-                        "Select the acknowledgement first.",
+                with c1:
+                    check_in = st.time_input(
+                        tr("الحضور", "Check-in"),
+                        value=time(9, 0),
                     )
-                )
 
-            elif not reason.strip():
-                st.error(
-                    tr("السبب مطلوب.", "Reason is required.")
-                )
-
-            elif last_day < date.fromisoformat(employee["hire_date"]):
-                st.error(
-                    tr(
-                        "آخر يوم عمل لا يمكن أن يسبق تاريخ التعيين.",
-                        "Last working day cannot precede hire date.",
+                with c2:
+                    check_out = st.time_input(
+                        tr("الانصراف", "Check-out"),
+                        value=time(17, 0),
                     )
+
+                notes = st.text_area(
+                    tr("ملاحظات", "Notes")
                 )
 
-            elif duplicate:
-                st.error(
-                    tr(
-                        "يوجد سجل نهاية خدمة لهذا الموظف بالفعل.",
-                        "An end-of-employment record already exists.",
+                submitted = st.form_submit_button(
+                    tr("حفظ الحضور", "Save attendance"),
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if submitted:
+                if check_out <= check_in:
+                    st.error(
+                        tr(
+                            "الانصراف يجب أن يكون بعد الحضور. "
+                            "الورديات الليلية ستُضاف لاحقًا.",
+                            "Check-out must follow check-in. "
+                            "Overnight shifts are not supported yet.",
+                        )
                     )
-                )
 
-            else:
-                save_record(
-                    "hr_exits",
-                    company,
-                    {
-                        "employee_id": employee_id,
-                        "last_day": last_day.isoformat(),
-                        "reason": reason.strip(),
-                    },
-                )
+                else:
+                    attempt(
+                        db.add_attendance,
+                        company_id,
+                        employee_id,
+                        work_date,
+                        check_in,
+                        check_out,
+                        notes,
+                        actor,
+                    )
 
     with list_tab:
-        show_records(
-            "hr_exits",
-            company,
-            employees,
-            [
-                ("last_day", "آخر يوم عمل", "Last working day"),
-                ("reason", "السبب والملاحظات", "Reason and notes"),
-            ],
+        records = load(
+            db.attendance_records,
+            company_id,
         )
 
+        search = st.text_input(
+            tr("بحث بالاسم أو الكود", "Search name or code"),
+            key=f"attendance_search_{company_id}",
+        ).strip().casefold()
 
-# =========================================================
-# نقطة الاستدعاء من app.py
-# =========================================================
+        rows = []
 
-def render_extended_hr(page, company, employees):
-    initialize()
+        for record in records:
+            if search and not (
+                search in record["employee_name"].casefold()
+                or search in record["employee_code"].casefold()
+            ):
+                continue
 
-    if not employees:
-        st.info(
-            tr(
-                "أضف موظفًا أولًا من صفحة الموظفين.",
-                "Add an employee from the Employees page first.",
+            rows.append({
+                tr("الكود", "Code"): record["employee_code"],
+                tr("الموظف", "Employee"): record["employee_name"],
+                tr("اليوم", "Date"): record["work_date"],
+                tr("الحضور", "Check-in"): str(record["check_in"]),
+                tr("الانصراف", "Check-out"): str(record["check_out"]),
+                tr("مدة التواجد بالساعات", "Presence hours"):
+                    float(record["presence_hours"]),
+                tr("ملاحظات", "Notes"): record["notes"],
+            })
+
+        if rows:
+            st.dataframe(
+                pd.DataFrame(rows),
+                hide_index=True,
+                use_container_width=True,
             )
-        )
-        return
+        else:
+            st.info(
+                tr("لا توجد سجلات مطابقة.", "No matching records.")
+            )
 
-    handlers = {
-        "contracts": contracts_page,
-        "payroll": payroll_page,
-        "evaluations": evaluations_page,
-        "training": training_page,
-        "exit": exit_page,
+
+def leaves_page(company_id, actor, employees, load, attempt):
+    st.subheader(
+        tr("طلبات الإجازة", "Leave Requests")
+    )
+
+    st.warning(
+        tr(
+            "الأيام المعروضة تقويمية وتشمل العطلات. "
+            "لا توجد أرصدة إجازات أو تحقق من الاستحقاق القانوني "
+            "في هذه المرحلة.",
+            "Displayed days are calendar days including holidays. "
+            "Leave balances and legal entitlement checks "
+            "are not implemented yet.",
+        )
+    )
+
+    types = {
+        "annual": tr("سنوية", "Annual"),
+        "sick": tr("مرضية", "Sick"),
+        "unpaid": tr("بدون راتب", "Unpaid"),
+        "other": tr("أخرى", "Other"),
     }
 
-    handler = handlers.get(page)
+    statuses = {
+        "pending": tr("بانتظار المراجعة", "Pending review"),
+        "approved": tr("معتمد", "Approved"),
+        "rejected": tr("مرفوض", "Rejected"),
+    }
 
-    if handler is None:
-        st.warning(
-            tr(
-                "هذه الصفحة غير متاحة.",
-                "This page is unavailable.",
+    add_tab, review_tab, list_tab = st.tabs([
+        tr("طلب جديد", "New request"),
+        tr("المراجعة", "Review"),
+        tr("كل الطلبات", "All requests"),
+    ])
+
+    with add_tab:
+        active = [
+            employee
+            for employee in employees
+            if employee["status"] == "active"
+        ]
+
+        if not active:
+            st.info(
+                tr(
+                    "لا يوجد موظفون نشطون.",
+                    "No active employees.",
+                )
             )
-        )
-        return
 
-    handler(company, employees)
+        else:
+            with st.form(f"leave_form_{company_id}"):
+                employee_id = employee_selector(
+                    employees,
+                    f"leave_employee_{company_id}",
+                )
+
+                leave_type = st.selectbox(
+                    tr("نوع الإجازة", "Leave type"),
+                    options=list(types),
+                    format_func=lambda key: types[key],
+                )
+
+                c1, c2 = st.columns(2)
+
+                with c1:
+                    start = st.date_input(
+                        tr("من تاريخ", "Start date"),
+                        value=date.today(),
+                    )
+
+                with c2:
+                    end = st.date_input(
+                        tr("إلى تاريخ", "End date"),
+                        value=date.today(),
+                    )
+
+                reason = st.text_area(
+                    tr("السبب", "Reason")
+                )
+
+                submitted = st.form_submit_button(
+                    tr("إرسال للمراجعة", "Submit for review"),
+                    type="primary",
+                    use_container_width=True,
+                )
+
+            if submitted:
+                if end < start:
+                    st.error(
+                        tr(
+                            "نهاية الإجازة تسبق بدايتها.",
+                            "End date precedes start date.",
+                        )
+                    )
+
+                elif not reason.strip():
+                    st.error(
+                        tr("أدخل السبب.", "Enter a reason.")
+                    )
+
+                else:
+                    selected_employee = next(
+                        employee
+                        for employee in employees
+                        if employee["id"] == employee_id
+                    )
+
+                    if start < selected_employee["hire_date"]:
+                        st.error(
+                            tr(
+                                "الإجازة لا يمكن أن تبدأ قبل التعيين.",
+                                "Leave cannot start before hire date.",
+                            )
+                        )
+
+                    else:
+                        existing = load(
+                            db.leave_requests,
+                            company_id,
+                        )
+
+                        overlap = any(
+                            row["employee_id"] == employee_id
+                            and row["status"] in {"pending", "approved"}
+                            and row["start_date"] <= end
+                            and row["end_date"] >= start
+                            for row in existing
+                        )
+
+                        if overlap:
+                            st.error(
+                                tr(
+                                    "يوجد طلب متداخل لهذا الموظف.",
+                                    "An overlapping request exists.",
+                                )
+                            )
+
+                        else:
+                            attempt(
+                                db.add_leave_request,
+                                company_id,
+                                employee_id,
+                                leave_type,
+                                start,
+                                end,
+                                reason,
+                                actor,
+                            )
+
+    requests = load(
+        db.leave_requests,
+        company_id,
+    )
+
+    with review_tab:
+        pending = [
+            row
+            for row in requests
+            if row["status"] == "pending"
+        ]
+
+        if not pending:
+            st.info(
+                tr(
+                    "لا توجد طلبات تنتظر المراجعة.",
+                    "No requests awaiting review.",
+                )
+            )
+
+        else:
+            request_map = {
+                row["id"]: row
+                for row in pending
+            }
+
+            request_id = st.selectbox(
+                tr("الطلب", "Request"),
+                options=list(request_map),
+                format_func=lambda key: (
+                    f"{request_map[key]['employee_name']} | "
+                    f"{request_map[key]['start_date']} → "
+                    f"{request_map[key]['end_date']}"
+                ),
+                key=f"review_request_{company_id}",
+            )
+
+            selected = request_map[request_id]
+
+            st.write(
+                f"{types[selected['leave_type']]} — "
+                f"{selected['calendar_days']} "
+                f"{tr('يومًا تقويميًا', 'calendar days')}"
+            )
+
+            st.write(selected["reason"])
+
+            with st.form(f"review_form_{request_id}"):
+                decision = st.selectbox(
+                    tr("القرار", "Decision"),
+                    ["approved", "rejected"],
+                    format_func=lambda key: statuses[key],
+                )
+
+                review_note = st.text_area(
+                    tr("تعليق المراجعة — مطلوب", "Review note — required")
+                )
+
+                confirmed = st.checkbox(
+                    tr(
+                        "أؤكد مراجعة بيانات الطلب.",
+                        "I confirm the request has been reviewed.",
+                    )
+                )
+
+                submitted = st.form_submit_button(
+                    tr("تنفيذ القرار", "Apply decision"),
+                    type="primary",
+                )
+
+            if submitted:
+                if not confirmed or not review_note.strip():
+                    st.error(
+                        tr(
+                            "أدخل تعليقًا وفعّل تأكيد المراجعة.",
+                            "Enter a note and confirm the review.",
+                        )
+                    )
+
+                else:
+                    attempt(
+                        db.review_leave_request,
+                        company_id,
+                        selected["employee_id"],
+                        request_id,
+                        decision,
+                        review_note,
+                        actor,
+                    )
+
+    with list_tab:
+        filter_options = {
+            "all": tr("كل الحالات", "All statuses"),
+            **statuses,
+        }
+
+        selected_status = st.selectbox(
+            tr("الحالة", "Status"),
+            options=list(filter_options),
+            format_func=lambda key: filter_options[key],
+            key=f"leave_status_filter_{company_id}",
+        )
+
+        rows = []
+
+        for request in requests:
+            if (
+                selected_status != "all"
+                and request["status"] != selected_status
+            ):
+                continue
+
+            rows.append({
+                tr("الموظف", "Employee"):
+                    request["employee_name"],
+                tr("الكود", "Code"):
+                    request["employee_code"],
+                tr("النوع", "Type"):
+                    types[request["leave_type"]],
+                tr("من", "From"):
+                    request["start_date"],
+                tr("إلى", "To"):
+                    request["end_date"],
+                tr("أيام تقويمية", "Calendar days"):
+                    request["calendar_days"],
+                tr("الحالة", "Status"):
+                    statuses[request["status"]],
+                tr("المراجع", "Reviewer"):
+                    request["reviewed_by"] or "",
+                tr("تعليق المراجعة", "Review note"):
+                    request["review_note"],
+            })
+
+        if rows:
+            st.dataframe(
+                pd.DataFrame(rows),
+                hide_index=True,
+                use_container_width=True,
+            )
+        else:
+            st.info(
+                tr("لا توجد طلبات مطابقة.", "No matching requests.")
+            )
