@@ -425,3 +425,337 @@ def audit_events(company_id):
         ORDER BY created_at DESC
         LIMIT 200
     """, {"company_id": company_id})
+# =========================================================
+# الحضور والإجازات
+# =========================================================
+
+def lock_employee(connection, company_id, employee_id):
+    employee = connection.execute(
+        text("""
+            SELECT id, status, hire_date
+            FROM erp_core.employees
+            WHERE company_id = :company_id
+              AND id = :employee_id
+            FOR UPDATE
+        """),
+        {
+            "company_id": company_id,
+            "employee_id": employee_id,
+        },
+    ).mappings().first()
+
+    if employee is None:
+        raise ValueError("Employee not found")
+
+    return employee
+
+
+def attendance_records(company_id):
+    return read("""
+        SELECT
+            a.id::text AS id,
+            e.code AS employee_code,
+            e.full_name AS employee_name,
+            a.work_date,
+            a.check_in,
+            a.check_out,
+
+            ROUND(
+                (
+                    EXTRACT(
+                        EPOCH FROM (a.check_out - a.check_in)
+                    ) / 3600
+                )::numeric,
+                2
+            ) AS presence_hours,
+
+            a.notes,
+            a.created_by
+
+        FROM erp_core.attendance a
+
+        JOIN erp_core.employees e
+          ON e.id = a.employee_id
+         AND e.company_id = a.company_id
+
+        WHERE a.company_id = :company_id
+
+        ORDER BY a.work_date DESC, e.full_name
+    """, {"company_id": company_id})
+
+
+def add_attendance(
+    company_id,
+    employee_id,
+    work_date,
+    check_in,
+    check_out,
+    notes,
+    actor,
+):
+    if check_out <= check_in:
+        raise ValueError("Invalid attendance times")
+
+    record_id = str(uuid4())
+
+    with engine().begin() as connection:
+        employee = lock_employee(
+            connection,
+            company_id,
+            employee_id,
+        )
+
+        if employee["status"] != "active":
+            raise ValueError("Employee is inactive")
+
+        if work_date < employee["hire_date"]:
+            raise ValueError("Attendance precedes hire date")
+
+        connection.execute(
+            text("""
+                INSERT INTO erp_core.attendance (
+                    id,
+                    company_id,
+                    employee_id,
+                    work_date,
+                    check_in,
+                    check_out,
+                    notes,
+                    created_by
+                )
+                VALUES (
+                    :id,
+                    :company_id,
+                    :employee_id,
+                    :work_date,
+                    :check_in,
+                    :check_out,
+                    :notes,
+                    :actor
+                )
+            """),
+            {
+                "id": record_id,
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "work_date": work_date,
+                "check_in": check_in,
+                "check_out": check_out,
+                "notes": notes.strip(),
+                "actor": actor,
+            },
+        )
+
+        audit(
+            connection,
+            company_id,
+            actor,
+            "created",
+            "attendance",
+            record_id,
+        )
+
+
+def leave_requests(company_id):
+    return read("""
+        SELECT
+            l.id::text AS id,
+            l.employee_id::text AS employee_id,
+            e.code AS employee_code,
+            e.full_name AS employee_name,
+            l.leave_type,
+            l.start_date,
+            l.end_date,
+            (l.end_date - l.start_date + 1) AS calendar_days,
+            l.reason,
+            l.status,
+            l.requested_by,
+            l.reviewed_by,
+            l.reviewed_at,
+            l.review_note
+
+        FROM erp_core.leave_requests l
+
+        JOIN erp_core.employees e
+          ON e.id = l.employee_id
+         AND e.company_id = l.company_id
+
+        WHERE l.company_id = :company_id
+
+        ORDER BY l.created_at DESC
+    """, {"company_id": company_id})
+
+
+def add_leave_request(
+    company_id,
+    employee_id,
+    leave_type,
+    start_date,
+    end_date,
+    reason,
+    actor,
+):
+    allowed_types = {"annual", "sick", "unpaid", "other"}
+
+    if leave_type not in allowed_types:
+        raise ValueError("Invalid leave type")
+
+    if end_date < start_date or not reason.strip():
+        raise ValueError("Invalid leave request")
+
+    request_id = str(uuid4())
+
+    with engine().begin() as connection:
+        employee = lock_employee(
+            connection,
+            company_id,
+            employee_id,
+        )
+
+        if employee["status"] != "active":
+            raise ValueError("Employee is inactive")
+
+        if start_date < employee["hire_date"]:
+            raise ValueError("Leave precedes hire date")
+
+        overlap = connection.execute(
+            text("""
+                SELECT id
+                FROM erp_core.leave_requests
+                WHERE company_id = :company_id
+                  AND employee_id = :employee_id
+                  AND status IN ('pending', 'approved')
+                  AND start_date <= :end_date
+                  AND end_date >= :start_date
+                LIMIT 1
+            """),
+            {
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "start_date": start_date,
+                "end_date": end_date,
+            },
+        ).first()
+
+        if overlap is not None:
+            raise ValueError("Overlapping leave request")
+
+        connection.execute(
+            text("""
+                INSERT INTO erp_core.leave_requests (
+                    id,
+                    company_id,
+                    employee_id,
+                    leave_type,
+                    start_date,
+                    end_date,
+                    reason,
+                    requested_by
+                )
+                VALUES (
+                    :id,
+                    :company_id,
+                    :employee_id,
+                    :leave_type,
+                    :start_date,
+                    :end_date,
+                    :reason,
+                    :actor
+                )
+            """),
+            {
+                "id": request_id,
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "leave_type": leave_type,
+                "start_date": start_date,
+                "end_date": end_date,
+                "reason": reason.strip(),
+                "actor": actor,
+            },
+        )
+
+        audit(
+            connection,
+            company_id,
+            actor,
+            "submitted",
+            "leave_request",
+            request_id,
+        )
+
+
+def review_leave_request(
+    company_id,
+    employee_id,
+    request_id,
+    target,
+    review_note,
+    actor,
+):
+    if target not in {"approved", "rejected"}:
+        raise ValueError("Invalid review status")
+
+    if not review_note.strip():
+        raise ValueError("Review note required")
+
+    with engine().begin() as connection:
+        employee = lock_employee(
+            connection,
+            company_id,
+            employee_id,
+        )
+
+        request = connection.execute(
+            text("""
+                SELECT status
+                FROM erp_core.leave_requests
+                WHERE company_id = :company_id
+                  AND employee_id = :employee_id
+                  AND id = :request_id
+                FOR UPDATE
+            """),
+            {
+                "company_id": company_id,
+                "employee_id": employee_id,
+                "request_id": request_id,
+            },
+        ).mappings().first()
+
+        if request is None or request["status"] != "pending":
+            raise ConflictError("Request already reviewed")
+
+        if target == "approved" and employee["status"] != "active":
+            raise ValueError("Employee is inactive")
+
+        connection.execute(
+            text("""
+                UPDATE erp_core.leave_requests
+                SET
+                    status = :target,
+                    reviewed_by = :actor,
+                    reviewed_at = NOW(),
+                    review_note = :review_note
+                WHERE id = :request_id
+                  AND company_id = :company_id
+                  AND employee_id = :employee_id
+                  AND status = 'pending'
+            """),
+            {
+                "target": target,
+                "actor": actor,
+                "review_note": review_note.strip(),
+                "request_id": request_id,
+                "company_id": company_id,
+                "employee_id": employee_id,
+            },
+        )
+
+        audit(
+            connection,
+            company_id,
+            actor,
+            target,
+            "leave_request",
+            request_id,
+        )
