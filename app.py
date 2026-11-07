@@ -9,7 +9,7 @@ import streamlit as st
 
 from sqlalchemy.exc import IntegrityError
 
-import database as db
+import database as db import customer_accounts
 import hr_operations
 
 st.set_page_config(
