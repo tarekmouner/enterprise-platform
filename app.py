@@ -344,10 +344,12 @@ with st.sidebar:
     )
 
     if st.session_state.module == "hr":
-        titles = {
+               titles = {
             "Dashboard": tr("لوحة القسم", "Dashboard"),
             "Employees": tr("الموظفون", "Employees"),
             "Profile": tr("ملف الموظف", "Employee profile"),
+            "Attendance": tr("الحضور والانصراف", "Attendance"),
+            "Leaves": tr("الإجازات والمراجعة", "Leave & Review"),
         }
 
         st.radio(
