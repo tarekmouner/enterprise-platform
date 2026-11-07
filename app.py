@@ -52,18 +52,27 @@ def attempt(function, *args):
         function(*args)
 
     except db.ConflictError:
-        st.error(tr(
-            "البيانات تغيرت. حدّث الصفحة وحاول مجددًا.",
-            "Data changed. Reload and retry.",
-        ))
+        st.error(
+            tr(
+                "البيانات تغيرت أو تمت مراجعة الطلب بالفعل. "
+                "حدّث الصفحة وحاول مجددًا.",
+                "The data changed or the request was already reviewed. "
+                "Reload the page and retry.",
+            )
+        )
 
     except IntegrityError:
-        st.error(tr(
-            "تعذر الحفظ: كود مكرر، علاقة غير صحيحة، "
-            "أو عقد نشط موجود بالفعل.",
-            "Save failed: duplicate code, invalid relationship "
-            "or an active contract already exists.",
-        ))
+        st.error(
+            tr(
+                "تعذر الحفظ. قد يكون الكود مكررًا، "
+                "أو سجل الحضور موجودًا لنفس اليوم، "
+                "أو يوجد عقد نشط بالفعل، "
+                "أو توجد بيانات مرتبطة غير صحيحة.",
+                "Save failed. The code or attendance record may "
+                "already exist, an active contract may exist, "
+                "or related data may be invalid.",
+            )
+        )
 
     except ValueError as error:
         messages = {
@@ -77,23 +86,31 @@ def attempt(function, *args):
             ),
             "Missing employee fields": (
                 "أكمل بيانات الموظف المطلوبة.",
-                "Complete required employee fields.",
+                "Complete the required employee fields.",
+            ),
+            "Employee not found": (
+                "الموظف غير موجود داخل الشركة الحالية.",
+                "Employee not found in the current company.",
+            ),
+            "Employee is inactive": (
+                "الموظف غير نشط.",
+                "Employee is inactive.",
             ),
             "Contract number required": (
                 "رقم العقد مطلوب.",
                 "Contract number is required.",
             ),
             "Invalid contract dates": (
-                "تواريخ العقد غير صحيحة.",
-                "Invalid contract dates.",
-            ),
-            "Employee is inactive": (
-                "الموظف غير نشط.",
-                "Employee is inactive.",
+                "تاريخ نهاية العقد لا يمكن أن يسبق بدايته.",
+                "Contract end date cannot precede its start date.",
             ),
             "Contract starts before hire date": (
                 "بداية العقد تسبق تاريخ التعيين.",
                 "Contract starts before hire date.",
+            ),
+            "Invalid transition": (
+                "هذا الانتقال بين حالات العقد غير مسموح.",
+                "This contract status transition is not allowed.",
             ),
             "Invalid attendance times": (
                 "وقت الانصراف يجب أن يكون بعد الحضور.",
@@ -103,12 +120,16 @@ def attempt(function, *args):
                 "الحضور يسبق تاريخ تعيين الموظف.",
                 "Attendance precedes hire date.",
             ),
+            "Invalid leave type": (
+                "نوع الإجازة غير صحيح.",
+                "Invalid leave type.",
+            ),
             "Invalid leave request": (
-                "راجع تواريخ الإجازة والسبب.",
-                "Check leave dates and reason.",
+                "راجع تواريخ الإجازة وأدخل السبب.",
+                "Check the leave dates and enter a reason.",
             ),
             "Leave precedes hire date": (
-                "الإجازة تسبق تاريخ التعيين.",
+                "الإجازة تسبق تاريخ تعيين الموظف.",
                 "Leave precedes hire date.",
             ),
             "Overlapping leave request": (
@@ -119,36 +140,42 @@ def attempt(function, *args):
                 "تعليق المراجعة مطلوب.",
                 "Review note is required.",
             ),
+            "Invalid review status": (
+                "قرار المراجعة غير صحيح.",
+                "Invalid review decision.",
+            ),
         }
 
-        pair = messages.get(
+        message = messages.get(
             str(error),
             (
-                "راجع البيانات وحالة الموظف أو الطلب.",
-                "Check the data and employee/request status.",
+                "راجع البيانات والتواريخ وحالة الموظف أو الطلب.",
+                "Check the data, dates and employee/request status.",
             ),
         )
 
-        st.error(tr(pair[0], pair[1]))        st.error(tr(
-            "راجع الحقول والتواريخ وحالة الموظف والعقد.",
-            "Check fields, dates and employee/contract status.",
-        ))
+        st.error(
+            tr(message[0], message[1])
+        )
 
     except Exception as error:
         logging.getLogger(__name__).error(
             "Operation failed: %s",
             type(error).__name__,
         )
-        st.error(tr(
-            "تعذر تنفيذ العملية. راجع إعدادات قاعدة البيانات.",
-            "Operation failed. Check database configuration.",
-        ))
+
+        st.error(
+            tr(
+                "تعذر تنفيذ العملية. "
+                "راجع إعدادات قاعدة البيانات والجداول.",
+                "Operation failed. "
+                "Check database configuration and tables.",
+            )
+        )
 
     else:
         st.session_state.notice = True
         st.rerun()
-
-
 def load(function, *args):
     try:
         return function(*args)
