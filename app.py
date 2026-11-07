@@ -1,9 +1,16 @@
-import streamlit as st
-import pandas as pd
+import hmac
+import logging
+import time
 
-from datetime import datetime, date, time
+from datetime import date, datetime
 from zoneinfo import ZoneInfo
-from uuid import uuid4
+
+import pandas as pd
+import streamlit as st
+
+from sqlalchemy.exc import IntegrityError
+
+import database as db
 
 
 # =========================================================
@@ -18,118 +25,317 @@ st.set_page_config(
 
 
 # =========================================================
-# الأقسام
+# تعريف الأقسام والصفحات
 # =========================================================
 
 MODULES = {
-    "company": ("إدارة الشركات والمنصة", "Companies & Platform"),
-    "finance": ("المالية والحسابات", "Finance & Accounting"),
-    "sales": ("المبيعات وCRM", "Sales & CRM"),
-    "purchases": ("المشتريات والموردون", "Purchasing & Suppliers"),
-    "inventory": ("المخازن والمخزون", "Warehouses & Inventory"),
-    "production": ("الإنتاج والتصنيع", "Production & Manufacturing"),
+    "company": ("إدارة الشركة", "Company Management"),
+    "finance": ("المالية والحسابات", "Finance"),
+    "sales": ("المبيعات والعملاء", "Sales & CRM"),
+    "purchases": ("المشتريات والموردون", "Purchasing"),
+    "inventory": ("المخازن والمخزون", "Inventory"),
+    "production": ("الإنتاج والتصنيع", "Production"),
     "quality": ("الجودة", "Quality"),
-    "hr": ("الموارد البشرية والموظفون", "Human Resources"),
+    "hr": ("الموارد البشرية", "Human Resources"),
     "operations": ("التشغيل والأسطول", "Operations & Fleet"),
     "secretariat": ("السكرتارية والأمن", "Secretariat & Security"),
-    "communication": ("التواصل والاجتماعات", "Chat & Meetings"),
-    "digital": ("المواقع والمتاجر", "Websites & Stores"),
-    "projects": ("المشروعات والمهام", "Projects & Tasks"),
-    "documents": ("المستندات والأرشفة", "Documents & Archive"),
-    "builder": ("منشئ الأنظمة", "System Builder"),
-    "ai": ("المساعد الذكي", "AI Assistant"),
+    "communication": ("التواصل والاجتماعات", "Communication"),
+    "digital": ("المواقع والمتاجر", "Digital Channels"),
+    "projects": ("المشروعات والمهام", "Projects"),
+    "documents": ("المستندات", "Documents"),
+    "builder": ("طلبات بناء الأنظمة", "System Build Requests"),
+    "ai": ("طلبات المساعد الذكي", "AI Requests"),
     "executive": ("الإدارة العليا", "Executive Management"),
-    "governance": ("الحوكمة والتكاملات", "Governance & Integrations"),
-}
-
-HR_PAGES = {
-    "dashboard": ("لوحة الموارد البشرية", "HR Dashboard"),
-    "employees": ("الموظفون", "Employees"),
-    "contracts": ("العقود", "Contracts"),
-    "attendance": ("الحضور والانصراف", "Attendance"),
-    "leaves": ("الإجازات", "Leave Requests"),
-    "payroll": ("الرواتب", "Payroll"),
-    "evaluations": ("التقييمات", "Evaluations"),
-    "training": ("التدريب", "Training"),
-    "exit": ("نهاية الخدمة", "End of Employment"),
+    "governance": ("الحوكمة والتكاملات", "Governance"),
 }
 
 
-# =========================================================
-# حسابات تجريبية فقط
-# لا تستخدم كلمات مرور حقيقية داخل المستودع
-# =========================================================
+def field(key, arabic, english, kind="text", required=False):
+    return {
+        "key": key,
+        "label": (arabic, english),
+        "kind": kind,
+        "required": required,
+    }
 
-USERS = {
-    "admin": {
-        "password": "admin123",
-        "name": ("مدير النظام", "System Administrator"),
-        "company": ("مجموعة المؤسسة", "Enterprise Group"),
-        "modules": list(MODULES.keys()),
+
+def category(arabic, english, fields=None):
+    if fields is None:
+        fields = [
+            field("title", "العنوان", "Title", required=True),
+            field("date", "التاريخ", "Date", "date"),
+            field("owner", "المسؤول", "Owner"),
+            field("notes", "التفاصيل", "Details", "textarea"),
+        ]
+
+    return {
+        "label": (arabic, english),
+        "fields": fields,
+    }
+
+
+PAGES = {
+    "company": {
+        "branches": category("الفروع والمواقع", "Branches & Sites"),
+        "departments": category("الإدارات والأقسام", "Departments"),
+        "policies": category("السياسات", "Policies"),
     },
-    "hr": {
-        "password": "hr123",
-        "name": ("مدير الموارد البشرية", "HR Manager"),
-        "company": ("مجموعة المؤسسة", "Enterprise Group"),
-        "modules": ["hr", "communication"],
-    },
-    "sales": {
-        "password": "sales123",
-        "name": ("مدير المبيعات", "Sales Manager"),
-        "company": ("شركة المبيعات", "Sales Company"),
-        "modules": ["sales", "inventory", "communication"],
-    },
-    "warehouse": {
-        "password": "warehouse123",
-        "name": ("مدير المخازن", "Warehouse Manager"),
-        "company": ("شركة التشغيل", "Operations Company"),
-        "modules": ["inventory", "purchases", "operations"],
-    },
+
     "finance": {
-        "password": "finance123",
-        "name": ("المدير المالي", "Finance Manager"),
-        "company": ("الشركة المالية", "Finance Company"),
-        "modules": ["finance", "executive"],
+        "accounts": category("دليل الحسابات", "Account Directory"),
+        "banks": category("الحسابات البنكية", "Bank Account Directory"),
+        "cashboxes": category("الخزائن", "Cashbox Directory"),
+        "expenses": category("طلبات المصروفات", "Expense Requests"),
+        "taxes": category("ملفات المتابعة الضريبية", "Tax Follow-up"),
+        "budgets": category("مسودات الموازنات", "Budget Drafts"),
+    },
+
+    "sales": {
+        "customers": category(
+            "العملاء",
+            "Customers",
+            [
+                field("name", "اسم العميل", "Customer name",
+                      required=True),
+                field("phone", "الهاتف", "Phone"),
+                field("email", "البريد", "Email"),
+                field("address", "العنوان", "Address"),
+                field("notes", "ملاحظات", "Notes", "textarea"),
+            ],
+        ),
+        "leads": category("العملاء المحتملون", "Leads"),
+        "opportunities": category("الفرص البيعية", "Opportunities"),
+        "quotes": category("مسودات عروض الأسعار", "Quote Drafts"),
+        "orders": category("سجل طلبات البيع", "Sales Request Register"),
+        "visits": category("زيارات المندوبين", "Sales Visits"),
+    },
+
+    "purchases": {
+        "suppliers": category(
+            "الموردون",
+            "Suppliers",
+            [
+                field("name", "اسم المورد", "Supplier name",
+                      required=True),
+                field("phone", "الهاتف", "Phone"),
+                field("email", "البريد", "Email"),
+                field("address", "العنوان", "Address"),
+                field("notes", "ملاحظات", "Notes", "textarea"),
+            ],
+        ),
+        "requests": category("طلبات الشراء", "Purchase Requests"),
+        "quotes": category("سجل عروض الموردين", "Supplier Quotes"),
+        "orders": category("مسودات أوامر الشراء", "Purchase Order Drafts"),
+        "evaluations": category("تقييم الموردين", "Supplier Evaluations"),
+    },
+
+    "inventory": {
+        "warehouses": category(
+            "تعريف المخازن",
+            "Warehouse Directory",
+            [
+                field("name", "اسم المخزن", "Warehouse name",
+                      required=True),
+                field("location", "الموقع", "Location"),
+                field("manager", "المسؤول", "Manager"),
+                field("notes", "ملاحظات", "Notes", "textarea"),
+            ],
+        ),
+        "items": category(
+            "تعريف الأصناف",
+            "Item Directory",
+            [
+                field("name", "اسم الصنف", "Item name",
+                      required=True),
+                field("unit", "وحدة القياس", "Unit",
+                      required=True),
+                field("group", "المجموعة", "Group"),
+                field("notes", "المواصفات", "Specifications", "textarea"),
+            ],
+        ),
+        "stock_requests": category(
+            "طلبات حركة مخزون",
+            "Stock Movement Requests",
+        ),
+        "counts": category("محاضر الجرد", "Stock Count Notes"),
+    },
+
+    "production": {
+        "products": category("تعريف المنتجات", "Product Directory"),
+        "plans": category("خطط الإنتاج", "Production Plans"),
+        "orders": category("مسودات أوامر التصنيع", "Manufacturing Drafts"),
+        "stoppages": category("تقارير التوقف", "Stoppage Reports"),
+    },
+
+    "quality": {
+        "plans": category("خطط الجودة", "Quality Plans"),
+        "inspections": category("سجلات الفحص", "Inspection Records"),
+        "ncr": category("بلاغات عدم المطابقة", "Nonconformity Reports"),
+        "actions": category("الإجراءات التصحيحية", "Corrective Actions"),
+        "audits": category("سجلات التدقيق", "Audit Records"),
+    },
+
+    "hr": {
+        "employees": category(
+            "الموظفون",
+            "Employees",
+            [
+                field("name", "اسم الموظف", "Employee name",
+                      required=True),
+                field("job", "المسمى الوظيفي", "Job title",
+                      required=True),
+                field("department", "القسم", "Department"),
+                field("branch", "الفرع", "Branch"),
+                field("phone", "الهاتف", "Phone"),
+                field("email", "البريد", "Email"),
+                field("hire_date", "تاريخ التعيين", "Hire date", "date"),
+                field("notes", "ملاحظات", "Notes", "textarea"),
+            ],
+        ),
+        "contracts": category("سجل العقود", "Contract Register"),
+        "attendance": category(
+            "سجل الحضور",
+            "Attendance Register",
+            [
+                field("employee_code", "كود الموظف", "Employee code",
+                      required=True),
+                field("date", "التاريخ", "Date", "date"),
+                field("check_in", "وقت الحضور", "Check-in", "time"),
+                field("check_out", "وقت الانصراف", "Check-out", "time"),
+                field("notes", "ملاحظات", "Notes", "textarea"),
+            ],
+        ),
+        "leaves": category(
+            "طلبات الإجازات",
+            "Leave Requests",
+            [
+                field("employee_code", "كود الموظف", "Employee code",
+                      required=True),
+                field("type", "نوع الإجازة", "Leave type",
+                      required=True),
+                field("start", "من تاريخ", "Start date", "date"),
+                field("end", "إلى تاريخ", "End date", "date"),
+                field("notes", "السبب", "Reason", "textarea"),
+            ],
+        ),
+        "payroll": category(
+            "مسودات الرواتب",
+            "Payroll Drafts",
+            [
+                field("employee_code", "كود الموظف", "Employee code",
+                      required=True),
+                field("period", "الفترة مثل 2026-11", "Period: 2026-11",
+                      required=True),
+                field("currency", "العملة", "Currency",
+                      required=True),
+                field("basic", "الأساسي", "Basic", "number"),
+                field("additions", "الإضافات", "Additions", "number"),
+                field("deductions", "الخصومات", "Deductions", "number"),
+                field("notes", "ملاحظات", "Notes", "textarea"),
+            ],
+        ),
+        "evaluations": category("سجل التقييمات", "Evaluation Register"),
+        "training": category("سجل التدريب", "Training Register"),
+        "exits": category("سجل نهاية الخدمة", "Exit Register"),
+    },
+
+    "operations": {
+        "vehicles": category("المركبات", "Vehicles"),
+        "drivers": category("السائقون", "Drivers"),
+        "deliveries": category("مهام التوصيل", "Delivery Tasks"),
+        "maintenance": category("طلبات الصيانة", "Maintenance Requests"),
+        "fuel": category("سجلات الوقود", "Fuel Records"),
+    },
+
+    "secretariat": {
+        "appointments": category("المواعيد", "Appointments"),
+        "visitors": category("الزوار", "Visitors"),
+        "permits": category("طلبات التصاريح", "Permit Requests"),
+        "incidents": category("البلاغات الأمنية", "Security Incidents"),
+    },
+
+    "communication": {
+        "meetings": category("جدولة الاجتماعات", "Meeting Schedule"),
+        "rooms": category("تعريف غرف الاجتماعات", "Meeting Room Directory"),
+        "minutes": category("محاضر الاجتماعات", "Meeting Minutes"),
+        "followups": category("متابعات التواصل", "Communication Follow-ups"),
+    },
+
+    "digital": {
+        "websites": category("طلبات المواقع", "Website Requests"),
+        "stores": category("طلبات المتاجر", "Store Requests"),
+        "content": category("مسودات المحتوى", "Content Drafts"),
+    },
+
+    "projects": {
+        "projects": category("سجل المشروعات", "Project Register"),
+        "tasks": category("المهام", "Tasks"),
+        "risks": category("مخاطر المشروعات", "Project Risks"),
+    },
+
+    "documents": {
+        "register": category(
+            "فهرس المستندات",
+            "Document Index",
+            [
+                field("title", "اسم المستند", "Document title",
+                      required=True),
+                field("reference", "مرجع المستند", "Document reference"),
+                field("owner", "المسؤول", "Owner"),
+                field("notes", "ملاحظات", "Notes", "textarea"),
+            ],
+        ),
+    },
+
+    "builder": {
+        "requests": category("طلبات بناء صفحات", "Page Build Requests"),
+        "templates": category("أوصاف القوالب", "Template Descriptions"),
+    },
+
+    "ai": {
+        "requests": category("طلبات التحليل والمساعدة", "Analysis Requests"),
+    },
+
+    "executive": {
+        "goals": category("الأهداف", "Goals"),
+        "decisions": category("القرارات", "Decisions"),
+        "initiatives": category("المبادرات", "Initiatives"),
+    },
+
+    "governance": {
+        "risks": category("سجل المخاطر", "Risk Register"),
+        "obligations": category("الالتزامات", "Obligations"),
+        "integrations": category("طلبات التكامل", "Integration Requests"),
+        "changes": category("طلبات التغيير", "Change Requests"),
     },
 }
 
 
 # =========================================================
-# تهيئة الجلسة
+# تهيئة الجلسة واللغة
 # =========================================================
 
 DEFAULTS = {
     "authenticated": False,
-    "username": None,
     "lang": "ar",
     "module": None,
-    "hr_page": "dashboard",
-    "employees": [],
-    "attendance": [],
-    "leaves": [],
+    "page": "dashboard",
+    "login_attempts": 0,
+    "login_block_until": 0.0,
 }
 
 for key, value in DEFAULTS.items():
     if key not in st.session_state:
-        if isinstance(value, list):
-            st.session_state[key] = value.copy()
-        else:
-            st.session_state[key] = value
+        st.session_state[key] = value
 
 
 def tr(arabic, english):
     return arabic if st.session_state.lang == "ar" else english
 
 
-def translated(value):
-    return tr(value[0], value[1])
+def label(pair):
+    return tr(pair[0], pair[1])
 
-
-# =========================================================
-# تصميم الواجهة
-# ملاحظة: محددات CSS الداخلية قد تحتاج تحديثًا
-# عند تغيير إصدار Streamlit
-# =========================================================
 
 direction = "rtl" if st.session_state.lang == "ar" else "ltr"
 
@@ -142,20 +348,13 @@ st.markdown(
             max-width: 180px !important;
         }}
 
-        [data-testid="stSidebar"] p,
-        [data-testid="stSidebar"] label,
-        [data-testid="stSidebar"] button {{
+        [data-testid="stSidebar"] button,
+        [data-testid="stSidebar"] p {{
             font-size: 12px !important;
         }}
 
-        [data-testid="stSidebar"] button {{
-            min-height: 32px;
-            padding: 4px 8px !important;
-        }}
-
         [data-testid="stMainBlockContainer"] {{
-            padding-top: 1.5rem;
-            padding-bottom: 2rem;
+            padding-top: 1.2rem;
         }}
 
         .stApp {{
@@ -174,25 +373,11 @@ st.markdown(
             font-size: 17px !important;
         }}
 
-        p, label {{
-            font-size: 14px;
-        }}
-
         .brand {{
             text-align: center;
-            padding: 16px 0;
-        }}
-
-        .brand-mark {{
-            display: inline-flex;
-            align-items: center;
-            justify-content: center;
-            width: 58px;
-            height: 58px;
-            border-radius: 16px;
-            background: #2563eb;
-            color: white;
-            font-size: 24px;
+            padding: 20px;
+            color: #2563eb;
+            font-size: 30px;
             font-weight: 700;
             direction: ltr;
         }}
@@ -203,48 +388,57 @@ st.markdown(
 
 
 # =========================================================
-# التنقل والحساب
+# أخطاء آمنة
+# =========================================================
+
+def database_error(error):
+    logging.getLogger(__name__).error(
+        "Database operation failed: %s",
+        type(error).__name__,
+    )
+
+    st.error(
+        tr(
+            "تعذر تنفيذ العملية. راجع اتصال قاعدة البيانات "
+            "وإنشاء الجداول وإعدادات Secrets.",
+            "Operation failed. Check database connection, "
+            "table setup and Secrets.",
+        )
+    )
+
+
+def read_database(function, *args):
+    try:
+        return function(*args)
+    except Exception as error:
+        database_error(error)
+        st.stop()
+
+
+# =========================================================
+# التنقل
 # =========================================================
 
 def open_module(module_key):
     st.session_state.module = module_key
-    st.session_state.hr_page = "dashboard"
+    st.session_state.page = "dashboard"
+
+
+def open_page(page_key):
+    st.session_state.page = page_key
 
 
 def logout():
     for key in list(st.session_state.keys()):
         del st.session_state[key]
 
+
 def change_language():
-    st.session_state.lang = st.session_state.header_language
+    st.session_state.lang = st.session_state.language_choice
 
 
-def current_user():
-    return USERS.get(st.session_state.username)
-
-
-def company_employees():
-    user = current_user()
-    if user is None:
-        return []
-
-    return [
-        employee
-        for employee in st.session_state.employees
-        if employee["company"] == user["company"][1]
-    ]
-
-
-def company_records(key):
-    user = current_user()
-    if user is None:
-        return []
-
-    return [
-        record
-        for record in st.session_state[key]
-        if record["company"] == user["company"][1]
-    ]
+def change_company():
+    st.session_state.page = "dashboard"
 
 
 # =========================================================
@@ -253,102 +447,191 @@ def company_records(key):
 
 def login_page():
     st.markdown(
-        """
-        <div class="brand">
-            <div class="brand-mark">EP</div>
-        </div>
-        """,
+        '<div class="brand">Enterprise Platform</div>',
         unsafe_allow_html=True,
     )
 
-    st.markdown(
-        f"<h2 style='text-align:center'>"
-        f"{tr('منصة المؤسسة الذكية', 'Enterprise Smart Platform')}"
-        f"</h2>",
-        unsafe_allow_html=True,
-    )
-
-    _, center, _ = st.columns([1, 1.5, 1])
+    _, center, _ = st.columns([1, 1.4, 1])
 
     with center:
+        st.subheader(tr("تسجيل الدخول", "Sign in"))
+
+        st.selectbox(
+            "اللغة / Language",
+            ["ar", "en"],
+            index=0 if st.session_state.lang == "ar" else 1,
+            format_func=lambda value: (
+                "العربية" if value == "ar" else "English"
+            ),
+            key="language_choice",
+            on_change=change_language,
+        )
+
+        try:
+            auth = st.secrets["auth"]
+            expected_username = str(auth["username"])
+            expected_password = str(auth["password"])
+
+            if not expected_username or not expected_password:
+                raise ValueError("Missing credentials")
+
+        except Exception:
+            st.error(
+                tr(
+                    "أضف قسم [auth] في Streamlit Secrets أولًا.",
+                    "Add the [auth] section to Streamlit Secrets first.",
+                )
+            )
+            st.stop()
+
+        blocked = time.time() < st.session_state.login_block_until
+
+        if blocked:
+            st.warning(
+                tr(
+                    "محاولات كثيرة. انتظر دقيقة ثم أعد المحاولة.",
+                    "Too many attempts. Wait a minute and retry.",
+                )
+            )
+
         with st.form("login_form"):
             username = st.text_input(
-                tr("اسم المستخدم", "Username"),
-                key="login_username",
+                tr("اسم المستخدم", "Username")
             )
 
             password = st.text_input(
                 tr("كلمة المرور", "Password"),
                 type="password",
-                key="login_password",
-            )
-
-            language = st.selectbox(
-                "اللغة / Language",
-                ["ar", "en"],
-                format_func=lambda value: (
-                    "العربية" if value == "ar" else "English"
-                ),
-                index=0 if st.session_state.lang == "ar" else 1,
             )
 
             submitted = st.form_submit_button(
-                tr("تسجيل الدخول", "Sign in"),
+                tr("دخول", "Sign in"),
                 type="primary",
                 use_container_width=True,
+                disabled=blocked,
             )
 
         if submitted:
-            username = username.strip()
-            user = USERS.get(username)
+            username_valid = hmac.compare_digest(
+                username.strip().encode("utf-8"),
+                expected_username.encode("utf-8"),
+            )
 
-            if user is not None and user["password"] == password:
+            password_valid = hmac.compare_digest(
+                password.encode("utf-8"),
+                expected_password.encode("utf-8"),
+            )
+
+            if username_valid and password_valid:
                 st.session_state.authenticated = True
-                st.session_state.username = username
-                st.session_state.lang = language
-                st.session_state.module = None
-                st.session_state.hr_page = "dashboard"
+                st.session_state.login_attempts = 0
+                st.session_state.login_block_until = 0.0
+                st.session_state.display_name = expected_username
                 st.rerun()
+
             else:
+                st.session_state.login_attempts += 1
+
+                if st.session_state.login_attempts >= 5:
+                    st.session_state.login_block_until = time.time() + 60
+                    st.session_state.login_attempts = 0
+
                 st.error(
                     tr(
-                        "اسم المستخدم أو كلمة المرور غير صحيحة.",
-                        "Incorrect username or password.",
+                        "بيانات الدخول غير صحيحة.",
+                        "Incorrect credentials.",
                     )
                 )
 
         st.caption(
             tr(
-                "نسخة تجريبية — لا تدخل بيانات شخصية أو مالية حقيقية.",
-                "Demo version — do not enter real personal or financial data.",
+                "نسخة تأسيسية بحساب مدير واحد. "
+                "ليست جاهزة لبيانات حساسة أو وصول عام.",
+                "Foundation version with one administrator account. "
+                "Not ready for sensitive data or public access.",
             )
         )
+
+
+# =========================================================
+# إدارة الشركات
+# =========================================================
+
+def company_creation_form(form_key):
+    with st.form(form_key, clear_on_submit=True):
+        name = st.text_input(
+            tr("اسم الشركة", "Company name")
+        )
+
+        submitted = st.form_submit_button(
+            tr("إضافة شركة", "Add company"),
+            type="primary",
+            use_container_width=True,
+        )
+
+    if submitted:
+        if not name.strip():
+            st.error(
+                tr(
+                    "اسم الشركة مطلوب.",
+                    "Company name is required.",
+                )
+            )
+            return
+
+        try:
+            db.create_company(name)
+
+        except IntegrityError:
+            st.error(
+                tr(
+                    "اسم الشركة موجود بالفعل.",
+                    "Company name already exists.",
+                )
+            )
+
+        except Exception as error:
+            database_error(error)
+
+        else:
+            st.rerun()
 
 
 # =========================================================
 # الشريط العلوي
 # =========================================================
 
-def top_bar():
-    user = current_user()
-    now = datetime.now(ZoneInfo("Africa/Cairo"))
+def top_bar(companies):
+    company_map = {
+        company["id"]: company["name"]
+        for company in companies
+    }
+
+    if st.session_state.get("selected_company") not in company_map:
+        st.session_state.selected_company = companies[0]["id"]
 
     c1, c2, c3, c4, c5 = st.columns(
-        [2, 2, 1.6, 1.2, 1],
+        [1.4, 2.2, 1.7, 1.2, 0.8],
         vertical_alignment="center",
     )
 
     with c1:
         st.caption(tr("المستخدم", "User"))
-        st.write(translated(user["name"]))
+        st.write(st.session_state.display_name)
 
     with c2:
-        st.caption(tr("الشركة الحالية", "Current company"))
-        st.write(translated(user["company"]))
+        st.selectbox(
+            tr("الشركة", "Company"),
+            options=list(company_map.keys()),
+            format_func=lambda key: company_map[key],
+            key="selected_company",
+            on_change=change_company,
+        )
 
     with c3:
+        now = datetime.now(ZoneInfo("Africa/Cairo"))
         st.caption(tr("توقيت القاهرة", "Cairo time"))
-        st.write(now.strftime("%Y-%m-%d | %H:%M"))
+        st.write(now.strftime("%Y-%m-%d %H:%M"))
 
     with c4:
         st.selectbox(
@@ -358,14 +641,13 @@ def top_bar():
             format_func=lambda value: (
                 "العربية" if value == "ar" else "English"
             ),
-            key="header_language",
+            key="language_choice",
             on_change=change_language,
         )
 
     with c5:
         st.button(
-            tr("خروج", "Sign out"),
-            key="logout_button",
+            tr("خروج", "Logout"),
             on_click=logout,
             use_container_width=True,
         )
@@ -378,7 +660,6 @@ def top_bar():
 # =========================================================
 
 def sidebar_menu():
-    user = current_user()
     module = st.session_state.module
 
     with st.sidebar:
@@ -386,644 +667,500 @@ def sidebar_menu():
 
         st.button(
             tr("كل الأقسام", "All modules"),
-            key="sidebar_home",
             use_container_width=True,
             on_click=open_module,
             args=(None,),
+            key="all_modules",
         )
 
-        if module == "hr":
-            st.markdown(
-                f"### {tr('الموارد البشرية', 'Human Resources')}"
+        if module in MODULES:
+            st.markdown(f"### {label(MODULES[module])}")
+
+            st.button(
+                tr("لوحة القسم", "Dashboard"),
+                use_container_width=True,
+                on_click=open_page,
+                args=("dashboard",),
+                key="section_dashboard",
             )
 
-            st.radio(
-                tr("صفحات القسم", "Module pages"),
-                options=list(HR_PAGES.keys()),
-                format_func=lambda key: translated(HR_PAGES[key]),
-                key="hr_page",
-                label_visibility="collapsed",
-            )
-
-        elif module in MODULES:
-            st.markdown(
-                f"### {translated(MODULES[module])}"
-            )
-            st.caption(
-                tr(
-                    "صفحات هذا القسم لم تُبنَ بعد.",
-                    "Pages for this module are not implemented yet.",
+            if module == "company":
+                st.button(
+                    tr("إضافة شركة", "Add company"),
+                    use_container_width=True,
+                    on_click=open_page,
+                    args=("new_company",),
+                    key="new_company_page",
                 )
-            )
+
+            for page_key, specification in PAGES[module].items():
+                st.button(
+                    label(specification["label"]),
+                    use_container_width=True,
+                    on_click=open_page,
+                    args=(page_key,),
+                    key=f"nav_{module}_{page_key}",
+                )
 
         st.divider()
 
         with st.expander(tr("تبديل القسم", "Switch module")):
-            for module_key in user["modules"]:
+            for module_key, module_label in MODULES.items():
                 st.button(
-                    translated(MODULES[module_key]),
-                    key=f"sidebar_module_{module_key}",
+                    label(module_label),
                     use_container_width=True,
                     on_click=open_module,
                     args=(module_key,),
+                    key=f"switch_{module_key}",
                 )
 
+        if st.button(
+            tr("اختبار قاعدة البيانات", "Test database"),
+            key="database_test",
+        ):
+            try:
+                if db.test_connection():
+                    st.success(tr("متصل", "Connected"))
+
+            except Exception as error:
+                database_error(error)
+
 
 # =========================================================
-# الصفحة الترحيبية
+# الصفحة الترحيبية ولوحة القسم
 # =========================================================
 
-def welcome_page():
-    user = current_user()
-
+def welcome_page(company_id):
     st.subheader(
-        f"{tr('مرحبًا', 'Welcome')}، "
-        f"{translated(user['name'])}"
+        tr(
+            "مرحبًا بك في منصة المؤسسة",
+            "Welcome to Enterprise Platform",
+        )
+    )
+
+    counts = read_database(
+        db.module_counts,
+        company_id,
+    )
+
+    c1, c2, c3 = st.columns(3)
+
+    c1.metric(
+        tr("الأقسام المتاحة", "Available modules"),
+        len(MODULES),
+    )
+
+    c2.metric(
+        tr("السجلات المحفوظة", "Saved records"),
+        sum(counts.values()),
+    )
+
+    c3.metric(
+        tr("أقسام بها بيانات", "Modules with data"),
+        len(counts),
     )
 
     st.caption(
         tr(
-            "اختر القسم الذي تريد العمل عليه.",
-            "Choose the module you want to work with.",
+            "هذه أعداد سجلات فعلية، وليست مؤشرات مالية أو تشغيلية.",
+            "These are actual record counts, not financial "
+            "or operational performance indicators.",
         )
     )
 
     columns = st.columns(3)
 
-    for index, module_key in enumerate(user["modules"]):
+    for index, (module_key, module_label) in enumerate(MODULES.items()):
         with columns[index % 3]:
             st.button(
-                translated(MODULES[module_key]),
-                key=f"welcome_module_{module_key}",
+                f"{label(module_label)} · {counts.get(module_key, 0)}",
+                key=f"home_{module_key}",
                 use_container_width=True,
                 on_click=open_module,
                 args=(module_key,),
             )
 
 
-# =========================================================
-# أدوات الموارد البشرية
-# =========================================================
-
-def employee_options(key):
-    employees = company_employees()
-
-    if not employees:
-        st.info(
-            tr(
-                "أضف موظفًا أولًا من صفحة الموظفين.",
-                "Add an employee from the Employees page first.",
-            )
-        )
-        return None
-
-    names = {
-        employee["id"]: (
-            f"{employee['code']} — {employee['name']}"
-        )
-        for employee in employees
-    }
-
-    return st.selectbox(
-        tr("الموظف", "Employee"),
-        options=list(names.keys()),
-        format_func=lambda employee_id: names[employee_id],
-        key=key,
+def module_dashboard(company_id, module_key):
+    st.subheader(
+        label(MODULES[module_key])
     )
 
+    counts = read_database(
+        db.category_counts,
+        company_id,
+        module_key,
+    )
 
-def employee_name(employee_id):
-    for employee in company_employees():
-        if employee["id"] == employee_id:
-            return employee["name"]
-    return employee_id
+    c1, c2 = st.columns(2)
 
+    c1.metric(
+        tr("عدد الصفحات", "Pages"),
+        len(PAGES[module_key]),
+    )
 
-def show_table(rows):
-    if rows:
-        st.dataframe(
-            pd.DataFrame(rows),
-            use_container_width=True,
-            hide_index=True,
+    c2.metric(
+        tr("عدد السجلات", "Records"),
+        sum(counts.values()),
+    )
+
+    if counts:
+        chart = pd.DataFrame([
+            {
+                tr("الصفحة", "Page"): label(
+                    PAGES[module_key].get(
+                        key,
+                        {"label": (key, key)},
+                    )["label"]
+                ),
+                tr("السجلات", "Records"): count,
+            }
+            for key, count in counts.items()
+        ])
+
+        st.bar_chart(
+            chart.set_index(
+                tr("الصفحة", "Page")
+            )
         )
+
     else:
-        st.info(tr("لا توجد سجلات بعد.", "No records yet."))
+        st.info(
+            tr(
+                "لا توجد بيانات في هذا القسم بعد.",
+                "No records in this module yet.",
+            )
+        )
 
 
 # =========================================================
-# لوحة HR
+# إنشاء حقول النموذج
 # =========================================================
 
-def hr_dashboard():
-    employees = company_employees()
-    attendance = company_records("attendance")
-    leaves = company_records("leaves")
+def render_field(specification):
+    title = label(specification["label"])
+
+    if specification["required"]:
+        title += " *"
+
+    kind = specification["kind"]
+
+    if kind == "textarea":
+        return st.text_area(title).strip()
+
+    if kind == "date":
+        return st.date_input(
+            title,
+            value=date.today(),
+        ).isoformat()
+
+    if kind == "time":
+        return st.time_input(
+            title,
+            value=datetime.strptime("09:00", "%H:%M").time(),
+        ).strftime("%H:%M")
+
+    if kind == "number":
+        return st.number_input(
+            title,
+            min_value=0.0,
+            step=100.0,
+        )
+
+    return st.text_input(title).strip()
+
+
+# =========================================================
+# صفحات الإضافة والعرض
+# =========================================================
+
+def record_page(company_id, module_key, category_key):
+    specification = PAGES[module_key][category_key]
 
     st.subheader(
-        tr("لوحة الموارد البشرية", "HR Dashboard")
+        label(specification["label"])
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-
-    c1.metric(tr("الموظفون", "Employees"), len(employees))
-    c2.metric(
-        tr("سجلات الحضور", "Attendance records"),
-        len(attendance),
-    )
-    c3.metric(
-        tr("طلبات الإجازة", "Leave requests"),
-        len(leaves),
-    )
-    c4.metric(
-        tr("طلبات معلقة", "Pending requests"),
-        sum(row["status"] == "pending" for row in leaves),
-    )
-
-    st.divider()
-
-    if employees:
-        counts = (
-            pd.DataFrame(employees)["department"]
-            .value_counts()
-            .rename(tr("عدد الموظفين", "Employee count"))
+    st.caption(
+        tr(
+            "هذه صفحة تسجيل بيانات. الحفظ لا ينشئ قيودًا "
+            "محاسبية أو حركة مخزون أو موافقات تلقائية.",
+            "This is a record-entry page. Saving does not "
+            "post accounting entries, move inventory "
+            "or trigger approvals.",
         )
+    )
 
-        st.write(
-            tr(
-                "توزيع الموظفين حسب القسم",
-                "Employees by department",
-            )
-        )
-        st.bar_chart(counts)
-    else:
+    if module_key in ["builder", "ai"]:
         st.info(
             tr(
-                "اختر الموظفين من القائمة الجانبية لإضافة أول موظف.",
-                "Select Employees in the sidebar to add your first employee.",
+                "يُحفظ وصف الطلب فقط. لم يُربط نموذج "
+                "ذكاء اصطناعي ولم يُفعّل البناء التلقائي.",
+                "Only the request description is saved. "
+                "No AI model or automatic builder is connected.",
             )
         )
 
+    if module_key == "communication":
+        st.info(
+            tr(
+                "سجلات الاجتماعات هنا لا تنشئ مكالمات فيديو "
+                "ولا تمنع تعارض حجوزات الغرف بعد.",
+                "Meeting records do not create video calls "
+                "or prevent room-booking conflicts yet.",
+            )
+        )
 
-# =========================================================
-# الموظفون
-# =========================================================
-
-def employees_page():
-    st.subheader(tr("الموظفون", "Employees"))
-
-    add_tab, list_tab = st.tabs([
-        tr("إضافة موظف", "Add employee"),
-        tr("قائمة الموظفين", "Employee list"),
+    tabs = st.tabs([
+        tr("إضافة", "Add"),
+        tr("السجلات", "Records"),
     ])
 
-    with add_tab:
-        with st.form("employee_form", clear_on_submit=True):
-            c1, c2 = st.columns(2)
+    notice_key = (
+        f"saved_{company_id}_{module_key}_{category_key}"
+    )
 
-            with c1:
-                code = st.text_input(
-                    tr("كود الموظف", "Employee code")
+    with tabs[0]:
+        if st.session_state.pop(notice_key, False):
+            st.success(
+                tr(
+                    "تم الحفظ في قاعدة البيانات.",
+                    "Saved to the database.",
                 )
-                name = st.text_input(
-                    tr("الاسم الكامل", "Full name")
-                )
-                job = st.text_input(
-                    tr("المسمى الوظيفي", "Job title")
-                )
-                department = st.selectbox(
-                    tr("القسم", "Department"),
-                    options=list(MODULES.keys()),
-                    format_func=lambda key: translated(MODULES[key]),
-                )
+            )
 
-            with c2:
-                branch = st.text_input(
-                    tr("الفرع", "Branch")
+        with st.form(
+            f"form_{company_id}_{module_key}_{category_key}"
+        ):
+            record_code = st.text_input(
+                tr(
+                    "كود السجل — يجب ألا يتكرر في الصفحة",
+                    "Record code — unique within this page",
                 )
-                phone = st.text_input(
-                    tr("الهاتف", "Phone")
-                )
-                email = st.text_input(
-                    tr("البريد الإلكتروني", "Email")
-                )
-                hire_date = st.date_input(
-                    tr("تاريخ التعيين", "Hire date"),
-                    value=date.today(),
+            )
+
+            payload = {}
+
+            for specification_field in specification["fields"]:
+                payload[specification_field["key"]] = render_field(
+                    specification_field
                 )
 
             submitted = st.form_submit_button(
-                tr("حفظ الموظف", "Save employee"),
+                tr("حفظ السجل", "Save record"),
                 type="primary",
                 use_container_width=True,
             )
 
         if submitted:
-            code = code.strip()
-            name = name.strip()
-            job = job.strip()
+            missing = [
+                label(item["label"])
+                for item in specification["fields"]
+                if item["required"]
+                and not str(
+                    payload.get(item["key"], "")
+                ).strip()
+            ]
 
-            existing_codes = {
-                employee["code"].casefold()
-                for employee in company_employees()
-            }
-
-            if not code or not name or not job:
+            if not record_code.strip():
                 st.error(
                     tr(
-                        "الكود والاسم والمسمى الوظيفي مطلوبة.",
-                        "Code, name and job title are required.",
+                        "كود السجل مطلوب.",
+                        "Record code is required.",
                     )
                 )
 
-            elif code.casefold() in existing_codes:
+            elif missing:
                 st.error(
                     tr(
-                        "كود الموظف مستخدم بالفعل.",
-                        "Employee code already exists.",
+                        "أكمل الحقول: ",
+                        "Complete fields: ",
+                    )
+                    + ", ".join(missing)
+                )
+
+            elif (
+                module_key == "hr"
+                and category_key == "leaves"
+                and payload["end"] < payload["start"]
+            ):
+                st.error(
+                    tr(
+                        "نهاية الإجازة لا يمكن أن تسبق بدايتها.",
+                        "Leave end cannot precede its start.",
                     )
                 )
 
             else:
-                st.session_state.employees.append({
-                    "id": uuid4().hex,
-                    "company": current_user()["company"][1],
-                    "code": code,
-                    "name": name,
-                    "job": job,
-                    "department": department,
-                    "branch": branch.strip(),
-                    "phone": phone.strip(),
-                    "email": email.strip(),
-                    "hire_date": hire_date.isoformat(),
-                })
-
-                st.success(
-                    tr(
-                        "تم حفظ الموظف في الجلسة الحالية.",
-                        "Employee saved in the current session.",
+                if module_key == "hr" and category_key == "payroll":
+                    payload["demo_net"] = round(
+                        payload["basic"]
+                        + payload["additions"]
+                        - payload["deductions"],
+                        2,
                     )
-                )
-                st.rerun()
 
-    with list_tab:
+                try:
+                    db.create_record(
+                        company_id,
+                        module_key,
+                        category_key,
+                        record_code,
+                        payload,
+                    )
+
+                except IntegrityError:
+                    st.error(
+                        tr(
+                            "تعذر الحفظ. قد يكون الكود مكررًا.",
+                            "Save failed. The code may already exist.",
+                        )
+                    )
+
+                except Exception as error:
+                    database_error(error)
+
+                else:
+                    st.session_state[notice_key] = True
+                    st.rerun()
+
+    with tabs[1]:
         search = st.text_input(
-            tr("بحث بالاسم أو الكود", "Search name or code"),
-            key="employee_search",
+            tr("بحث في السجلات", "Search records"),
+            key=f"search_{company_id}_{module_key}_{category_key}",
         ).strip().casefold()
+
+        records = read_database(
+            db.list_records,
+            company_id,
+            module_key,
+            category_key,
+        )
 
         rows = []
 
-        for employee in company_employees():
-            if (
-                search
-                and search not in employee["name"].casefold()
-                and search not in employee["code"].casefold()
+        for record in records:
+            row = {
+                tr("الكود", "Code"): record["record_code"],
+            }
+
+            for item in specification["fields"]:
+                row[label(item["label"])] = (
+                    record["payload"].get(item["key"], "")
+                )
+
+            if "demo_net" in record["payload"]:
+                row[
+                    tr("صافي تجريبي", "Demo net")
+                ] = record["payload"]["demo_net"]
+
+            row[
+                tr("تاريخ الحفظ", "Created at")
+            ] = record["created_at"].isoformat()
+
+            if search and not any(
+                search in str(value).casefold()
+                for value in row.values()
             ):
                 continue
 
-            rows.append({
-                tr("الكود", "Code"): employee["code"],
-                tr("الاسم", "Name"): employee["name"],
-                tr("الوظيفة", "Job"): employee["job"],
-                tr("القسم", "Department"): translated(
-                    MODULES[employee["department"]]
-                ),
-                tr("الفرع", "Branch"): employee["branch"],
-                tr("الهاتف", "Phone"): employee["phone"],
-                tr("البريد", "Email"): employee["email"],
-                tr("التعيين", "Hire date"): employee["hire_date"],
-            })
+            rows.append(row)
 
-        show_table(rows)
+        if rows:
+            st.dataframe(
+                pd.DataFrame(rows),
+                use_container_width=True,
+                hide_index=True,
+            )
 
+            st.caption(
+                f"{tr('عدد النتائج', 'Results')}: {len(rows)}"
+            )
 
-# =========================================================
-# الحضور والانصراف
-# =========================================================
-
-def attendance_page():
-    st.subheader(
-        tr("الحضور والانصراف", "Attendance")
-    )
-
-    add_tab, list_tab = st.tabs([
-        tr("إضافة سجل", "Add record"),
-        tr("سجل الحضور", "Attendance records"),
-    ])
-
-    with add_tab:
-        if company_employees():
-            with st.form("attendance_form"):
-                employee_id = employee_options(
-                    "attendance_employee"
-                )
-
-                work_date = st.date_input(
-                    tr("التاريخ", "Date"),
-                    value=date.today(),
-                )
-
-                c1, c2 = st.columns(2)
-
-                with c1:
-                    check_in = st.time_input(
-                        tr("الحضور", "Check-in"),
-                        value=time(9, 0),
-                    )
-
-                with c2:
-                    check_out = st.time_input(
-                        tr("الانصراف", "Check-out"),
-                        value=time(17, 0),
-                    )
-
-                submitted = st.form_submit_button(
-                    tr("حفظ السجل", "Save record"),
-                    type="primary",
-                    use_container_width=True,
-                )
-
-            if submitted:
-                duplicate = any(
-                    row["employee_id"] == employee_id
-                    and row["date"] == work_date.isoformat()
-                    for row in company_records("attendance")
-                )
-
-                if check_out <= check_in:
-                    st.error(
-                        tr(
-                            "وقت الانصراف يجب أن يكون بعد الحضور. "
-                            "النموذج الحالي يدعم وردية داخل اليوم نفسه فقط.",
-                            "Check-out must follow check-in. "
-                            "This form supports same-day shifts only.",
-                        )
-                    )
-
-                elif duplicate:
-                    st.error(
-                        tr(
-                            "يوجد سجل لهذا الموظف في التاريخ نفسه.",
-                            "A record already exists for this employee and date.",
-                        )
-                    )
-
-                else:
-                    duration = (
-                        datetime.combine(work_date, check_out)
-                        - datetime.combine(work_date, check_in)
-                    ).total_seconds() / 3600
-
-                    st.session_state.attendance.append({
-                        "company": current_user()["company"][1],
-                        "employee_id": employee_id,
-                        "date": work_date.isoformat(),
-                        "check_in": check_in.strftime("%H:%M"),
-                        "check_out": check_out.strftime("%H:%M"),
-                        "hours": round(duration, 2),
-                    })
-
-                    st.rerun()
         else:
             st.info(
                 tr(
-                    "أضف موظفًا أولًا.",
-                    "Add an employee first.",
+                    "لا توجد سجلات مطابقة.",
+                    "No matching records.",
                 )
             )
 
-    with list_tab:
-        rows = [
-            {
-                tr("الموظف", "Employee"): employee_name(
-                    row["employee_id"]
-                ),
-                tr("التاريخ", "Date"): row["date"],
-                tr("الحضور", "Check-in"): row["check_in"],
-                tr("الانصراف", "Check-out"): row["check_out"],
-                tr("الساعات", "Hours"): row["hours"],
-            }
-            for row in company_records("attendance")
-        ]
-
-        show_table(rows)
-
 
 # =========================================================
-# الإجازات
-# =========================================================
-
-def leaves_page():
-    st.subheader(tr("الإجازات", "Leave Requests"))
-
-    add_tab, list_tab = st.tabs([
-        tr("طلب إجازة", "New request"),
-        tr("قائمة الطلبات", "Request list"),
-    ])
-
-    leave_types = {
-        "annual": ("سنوية", "Annual"),
-        "sick": ("مرضية", "Sick"),
-        "unpaid": ("بدون راتب", "Unpaid"),
-        "emergency": ("طارئة", "Emergency"),
-    }
-
-    with add_tab:
-        if company_employees():
-            with st.form("leave_form"):
-                employee_id = employee_options(
-                    "leave_employee"
-                )
-
-                leave_type = st.selectbox(
-                    tr("نوع الإجازة", "Leave type"),
-                    options=list(leave_types.keys()),
-                    format_func=lambda key: translated(leave_types[key]),
-                )
-
-                c1, c2 = st.columns(2)
-
-                with c1:
-                    start = st.date_input(
-                        tr("من تاريخ", "Start date"),
-                        value=date.today(),
-                    )
-
-                with c2:
-                    end = st.date_input(
-                        tr("إلى تاريخ", "End date"),
-                        value=date.today(),
-                    )
-
-                reason = st.text_area(
-                    tr("السبب", "Reason")
-                )
-
-                submitted = st.form_submit_button(
-                    tr("إرسال الطلب", "Submit request"),
-                    type="primary",
-                    use_container_width=True,
-                )
-
-            if submitted:
-                if end < start:
-                    st.error(
-                        tr(
-                            "تاريخ النهاية لا يمكن أن يسبق البداية.",
-                            "End date cannot precede start date.",
-                        )
-                    )
-                else:
-                    st.session_state.leaves.append({
-                        "id": uuid4().hex,
-                        "company": current_user()["company"][1],
-                        "employee_id": employee_id,
-                        "type": leave_type,
-                        "start": start.isoformat(),
-                        "end": end.isoformat(),
-                        "days": (end - start).days + 1,
-                        "reason": reason.strip(),
-                        "status": "pending",
-                    })
-
-                    st.rerun()
-        else:
-            st.info(
-                tr(
-                    "أضف موظفًا أولًا.",
-                    "Add an employee first.",
-                )
-            )
-
-    with list_tab:
-        rows = [
-            {
-                tr("الموظف", "Employee"): employee_name(
-                    row["employee_id"]
-                ),
-                tr("النوع", "Type"): translated(
-                    leave_types[row["type"]]
-                ),
-                tr("من", "From"): row["start"],
-                tr("إلى", "To"): row["end"],
-                tr("أيام تقويمية", "Calendar days"): row["days"],
-                tr("السبب", "Reason"): row["reason"],
-                tr("الحالة", "Status"): tr(
-                    "بانتظار المراجعة", "Pending review"
-                ),
-            }
-            for row in company_records("leaves")
-        ]
-
-        show_table(rows)
-
-        st.caption(
-            tr(
-                "حساب الأيام هنا تقويمي فقط؛ لا يخصم العطلات "
-                "ولا يتحقق من رصيد الإجازات بعد.",
-                "Days are calendar days; holidays and leave "
-                "balances are not checked yet.",
-            )
-        )
-
-
-# =========================================================
-# صفحات لم تُنفذ بعد
-# =========================================================
-
-def hr_placeholder(page_key):
-    st.subheader(translated(HR_PAGES[page_key]))
-
-    st.info(
-        tr(
-            "هذه صفحة محجوزة ضمن الهيكل، ولم تُنفذ وظائفها بعد.",
-            "This page is reserved in the structure; "
-            "its functionality is not implemented yet.",
-        )
-    )
-
-
-def render_hr():
-    from hr_extended import render_extended_hr
-
-    page = st.session_state.hr_page
-
-    handlers = {
-        "dashboard": hr_dashboard,
-        "employees": employees_page,
-        "attendance": attendance_page,
-        "leaves": leaves_page,
-    }
-
-    if page in handlers:
-        handlers[page]()
-    else:
-        user = current_user()
-
-        render_extended_hr(
-            page=page,
-            company=user["company"][1],
-            employees=company_employees(),
-        )
-
-def module_placeholder(module_key):
-    st.subheader(translated(MODULES[module_key]))
-
-    st.info(
-        tr(
-            "هذا القسم موجود في الهيكل العام فقط. "
-            "صفحاته وعملياته لم تُنفذ بعد.",
-            "This module is currently a structural placeholder. "
-            "Its pages and operations are not implemented yet.",
-        )
-    )
-
-
-# =========================================================
-# تشغيل التطبيق مع التحقق من الصلاحيات
+# تشغيل المنصة
 # =========================================================
 
 if not st.session_state.authenticated:
     login_page()
+    st.stop()
 
-else:
-    user = current_user()
 
-    if user is None:
-        logout()
-        st.rerun()
+companies = read_database(db.list_companies)
 
-    if (
-        st.session_state.module is not None
-        and st.session_state.module not in user["modules"]
-    ):
-        st.error(
-            tr(
-                "لا تملك صلاحية الوصول إلى هذا القسم.",
-                "You do not have access to this module.",
-            )
-        )
-        st.stop()
-
-    top_bar()
-    sidebar_menu()
-
-    st.caption(
+if not companies:
+    st.subheader(
         tr(
-            "نسخة تجريبية — البيانات مؤقتة وتُمسح عند تسجيل الخروج "
-            "أو انتهاء الجلسة. الوقت يتحدث عند تفاعل الصفحة.",
-            "Demo — data is temporary and clears on logout "
-            "or session end. Time updates on page interaction.",
+            "إعداد أول شركة",
+            "Set up your first company",
         )
     )
 
-    module = st.session_state.module
+    st.info(
+        tr(
+            "أضف اسم الشركة للبدء.",
+            "Add a company name to begin.",
+        )
+    )
 
-    if module is None:
-        welcome_page()
+    company_creation_form("first_company_form")
 
-    elif module == "hr":
-        render_hr()
+    st.button(
+        tr("خروج", "Logout"),
+        on_click=logout,
+        key="setup_logout",
+    )
 
-    else:
-        module_placeholder(module)
+    st.stop()
+
+
+top_bar(companies)
+sidebar_menu()
+
+st.caption(
+    tr(
+        "نسخة تأسيسية لحفظ السجلات. حساب المدير يرى كل الشركات. "
+        "الوقت يتحدث عند التفاعل مع الصفحة.",
+        "Foundation record-management version. "
+        "The administrator can access all companies. "
+        "Time updates on page interaction.",
+    )
+)
+
+company_id = st.session_state.selected_company
+module_key = st.session_state.module
+page_key = st.session_state.page
+
+if module_key is None:
+    welcome_page(company_id)
+
+elif module_key not in MODULES:
+    st.error(tr("قسم غير معروف.", "Unknown module."))
+
+elif module_key == "company" and page_key == "new_company":
+    st.subheader(
+        tr("إضافة شركة جديدة", "Add company")
+    )
+    company_creation_form("additional_company_form")
+
+elif page_key == "dashboard":
+    module_dashboard(company_id, module_key)
+
+elif page_key in PAGES[module_key]:
+    record_page(
+        company_id,
+        module_key,
+        page_key,
+    )
+
+else:
+    st.error(tr("صفحة غير معروفة.", "Unknown page."))
