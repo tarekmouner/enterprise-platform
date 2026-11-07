@@ -403,7 +403,32 @@ if st.session_state.pop("notice", False):
     st.success(tr("تم تنفيذ العملية.", "Operation completed."))
 
 company_id = st.session_state.company_id
+if st.button(
+    tr(
+        "حسابات العملاء والمبيعات",
+        "Customer Accounts & Sales",
+    ),
+    key="open_customer_accounts",
+    use_container_width=True,
+):
+    navigate("customers")
+    st.rerun()
 
+
+if st.session_state.module == "customers":
+    st.button(
+        tr("العودة للمنصة", "Back to platform"),
+        key="back_from_customer_accounts",
+        on_click=navigate,
+        args=("home",),
+    )
+
+    customer_accounts.render(
+        company_id,
+        actor,
+    )
+
+    st.stop()
 
 # =========================================================
 # القائمة الجانبية
