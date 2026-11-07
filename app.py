@@ -409,11 +409,16 @@ company_id = st.session_state.company_id
 # القائمة الجانبية
 # =========================================================
 
+# =========================================================
+# القائمة الجانبية
+# =========================================================
+
 with st.sidebar:
     st.caption("Enterprise Workspace")
 
     st.button(
         tr("الرئيسية", "Home"),
+        key="sidebar_home",
         on_click=navigate,
         args=("home",),
         use_container_width=True,
@@ -421,6 +426,7 @@ with st.sidebar:
 
     st.button(
         tr("إدارة الشركة", "Company"),
+        key="sidebar_company",
         on_click=navigate,
         args=("company",),
         use_container_width=True,
@@ -428,39 +434,52 @@ with st.sidebar:
 
     st.button(
         tr("الموارد البشرية", "Human Resources"),
+        key="sidebar_hr",
         on_click=navigate,
         args=("hr",),
         use_container_width=True,
     )
 
     if st.session_state.module == "hr":
-               titles = {
-            "Dashboard": tr("لوحة القسم", "Dashboard"),
-            "Employees": tr("الموظفون", "Employees"),
-            "Profile": tr("ملف الموظف", "Employee profile"),
-            "Attendance": tr("الحضور والانصراف", "Attendance"),
-            "Leaves": tr("الإجازات والمراجعة", "Leave & Review"),
+        titles = {
+            "Dashboard": tr(
+                "لوحة القسم",
+                "Dashboard",
+            ),
+            "Employees": tr(
+                "الموظفون",
+                "Employees",
+            ),
+            "Profile": tr(
+                "ملف الموظف",
+                "Employee profile",
+            ),
+            "Attendance": tr(
+                "الحضور والانصراف",
+                "Attendance",
+            ),
+            "Leaves": tr(
+                "الإجازات والمراجعة",
+                "Leave & Review",
+            ),
         }
 
         st.radio(
             tr("صفحات القسم", "Module pages"),
-            list(titles),
-            format_func=lambda key: titles[key],
+            options=list(titles.keys()),
+            format_func=lambda page_key: titles[page_key],
             key="hr_page",
         )
 
+    st.divider()
+
     st.button(
         tr("سجل العمليات", "Activity log"),
+        key="sidebar_audit",
         on_click=navigate,
         args=("audit",),
         use_container_width=True,
     )
-
-
-# =========================================================
-# نموذج موظف متخصص
-# =========================================================
-
 def employee_form(departments, existing=None):
     department_map = {
         row["id"]: row["name"]
